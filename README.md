@@ -1,17 +1,17 @@
 <p align="center">
-  <img src="Logo/theoriarr.svg" alt="Theoriarr" width="128" />
+  <img src="Logo/zendarr.svg" alt="Zendarr" width="128" />
 </p>
 
-<h1 align="center">Theoriarr</h1>
+<h1 align="center">Zendarr</h1>
 
 <p align="center"><strong>Movies and TV, together in one place.</strong></p>
 
-Theoriarr is a unified fork/merge of [Sonarr](https://github.com/Sonarr/Sonarr) and
+Zendarr is a unified fork/merge of [Sonarr](https://github.com/Sonarr/Sonarr) and
 [Radarr](https://github.com/Radarr/Radarr): one backend, one UI and one port that manages movies,
 TV series and anime while preserving the Sonarr and Radarr HTTP APIs. It is a **drop-in
 replacement** for both.
 
-## What Theoriarr adds
+## What Zendarr adds
 
 Features upstream Sonarr and Radarr do not have:
 
@@ -54,13 +54,13 @@ Building requires the .NET SDK 10 and Node 24 (Node is only needed to build the 
 
 ```bash
 ./build.sh          # builds the unified backend + UI into _output/
-./theoriarr.sh      # starts the listener on http://localhost:6868
+./zendarr.sh      # starts the listener on http://localhost:6868
 ```
 
 ### Docker
 
 The image is published on Docker Hub as
-[`magicbotalex2/theoriarr`](https://hub.docker.com/r/magicbotalex2/theoriarr) (`:latest`, or
+[`magicbotalex2/zendarr`](https://hub.docker.com/r/magicbotalex2/zendarr) (`:latest`, or
 `:Debug` for the debug-only diagnostics endpoint). It follows the LinuxServer.io pattern: the
 container starts as root, remaps `PUID`/`PGID`, fixes the ownership of `/data` and `/app`, then
 drops privileges to that user for the service. Set `PUID`/`PGID` to the owner of your config folder
@@ -68,9 +68,9 @@ drops privileges to that user for the service. Set `PUID`/`PGID` to the owner of
 
 ```yaml
 services:
-  theoriarr:
-    image: magicbotalex2/theoriarr:latest
-    container_name: theoriarr
+  zendarr:
+    image: magicbotalex2/zendarr:latest
+    container_name: zendarr
     restart: unless-stopped
     ports:
       - "6868:6868"
@@ -78,14 +78,14 @@ services:
       PUID: 1000 # uid that owns ./config (id -u)
       PGID: 1000 # gid that owns ./config (id -g)
       TZ: UTC
-      # THEORIARR_DISABLE_AUTH: "true"   # skip the login page; API-key auth is unaffected
+      # ZENDARR_DISABLE_AUTH: "true"   # skip the login page; API-key auth is unaffected
     volumes:
       - ./config:/data
       - ./transcode:/transcode
 ```
 
 ```bash
-docker compose up -d          # pulls magicbotalex2/theoriarr:latest
+docker compose up -d          # pulls magicbotalex2/zendarr:latest
 ```
 
 Config, databases, logs and media metadata live in `/data`; transcode scratch in `/transcode`.
@@ -105,13 +105,13 @@ nix run              # start the backend (after building)
 ```
 
 ```nix
-services.theoriarr = {
+services.zendarr = {
   enable = true;
   openFirewall = true;
 };
 ```
 
-The module runs the unified backend from `/var/lib/theoriarr` as the `theoriarr` user.
+The module runs the unified backend from `/var/lib/zendarr` as the `zendarr` user.
 
 ## Credits
 
@@ -122,12 +122,12 @@ contributors.
 
 ## Upstream service dependencies
 
-Theoriarr runs **fully self-hosted**, without depending on Sonarr/Radarr-operated servers:
+Zendarr runs **fully self-hosted**, without depending on Sonarr/Radarr-operated servers:
 
-- **Metadata** is served by a [Providarr](https://github.com/MagicBOTAlex/Providarr) instance. Set it under **Settings > Metadata Source** (restart required) or via `THEORIARR__METADATA__PROVIDARRBASEURL` (env wins), or leave it unset to use the shared public `https://providarr.deprived.dev`; the `skyhook.sonarr.tv` / `api.radarr.video` / `services.sonarr.tv` URLs are no longer compiled in. Requests to the default host retry with progressive backoff + jitter when it is offline, rate-limited or returning 5xx. **Hosting your own instance is recommended** — the shared one caches aggressively and rate-limits per client (see the [Providarr README](https://github.com/MagicBOTAlex/Providarr#readme)), and Theoriarr surfaces its cache policy as a health warning.
+- **Metadata** is served by a [Providarr](https://github.com/MagicBOTAlex/Providarr) instance. Set it under **Settings > Metadata Source** (restart required) or via `ZENDARR__METADATA__PROVIDARRBASEURL` (env wins), or leave it unset to use the shared public `https://providarr.deprived.dev`; the `skyhook.sonarr.tv` / `api.radarr.video` / `services.sonarr.tv` URLs are no longer compiled in. Requests to the default host retry with progressive backoff + jitter when it is offline, rate-limited or returning 5xx. **Hosting your own instance is recommended** — the shared one caches aggressively and rate-limits per client (see the [Providarr README](https://github.com/MagicBOTAlex/Providarr#readme)), and Zendarr surfaces its cache policy as a health warning.
 - Scene mapping uses the independent [TheXEM](https://thexem.info) service; daily-series detection comes from TheTVDB air days.
 
-**Intentionally disabled.** Trakt, Simkl and AniList import lists, MyAnimeList import lists, and Trakt notifications authenticate through Servarr-operated servers (`auth.servarr.com` / `services.sonarr.tv`) and are deliberately disabled so Theoriarr never contacts them. They can be re-enabled once a self-hosted OAuth broker is available (set `ServarrAuthDependencies.Enabled = true` and repoint the broker URLs); **request one and it will be implemented.**
+**Intentionally disabled.** Trakt, Simkl and AniList import lists, MyAnimeList import lists, and Trakt notifications authenticate through Servarr-operated servers (`auth.servarr.com` / `services.sonarr.tv`) and are deliberately disabled so Zendarr never contacts them. They can be re-enabled once a self-hosted OAuth broker is available (set `ServarrAuthDependencies.Enabled = true` and repoint the broker URLs); **request one and it will be implemented.**
 
 ## Attribution
 
@@ -137,17 +137,17 @@ uses the TMDb and TheTVDB APIs; TheTVDB terms of use apply.
 
 ## License
 
-Theoriarr is licensed under the **GNU General Public License v3.0**. The full license text
+Zendarr is licensed under the **GNU General Public License v3.0**. The full license text
 is in [LICENSE](LICENSE). Copyright notices and license files from Sonarr and Radarr are
 preserved in their original locations.
 
 ## Modification notice (GPLv3 §5(a))
 
-This is a modified version of Sonarr and Radarr. Modifications made 2026 by the Theoriarr
+This is a modified version of Sonarr and Radarr. Modifications made 2026 by the Zendarr
 project.
 
-The only user-visible/legal change is that the combined product is called **Theoriarr**;
+The only user-visible/legal change is that the combined product is called **Zendarr**;
 upstream files and their notices are preserved as-is. Project/assembly names remain `Sonarr.*` and
-runtime process/update constants stay aligned to the real Theoriarr artifacts (no rename), keeping
+runtime process/update constants stay aligned to the real Zendarr artifacts (no rename), keeping
 upstream notices and API compatibility intact. This project is not affiliated with or endorsed by
 Team Sonarr or Team Radarr.

@@ -5,12 +5,12 @@
 # Use it layered on top of the base file:
 #   docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d --build
 #
-# The image is tagged magicbotalex2/theoriarr:Debug so it does not clobber the
-# release magicbotalex2/theoriarr:latest image. Rebuild without -f to return to a
+# The image is tagged magicbotalex2/zendarr:Debug so it does not clobber the
+# release magicbotalex2/zendarr:latest image. Rebuild without -f to return to a
 # release build.
 services:
-  theoriarr:
+  zendarr:
     build:
       args:
         CONFIGURATION: Debug
-    image: magicbotalex2/theoriarr:Debug
+    image: magicbotalex2/zendarr:Debug

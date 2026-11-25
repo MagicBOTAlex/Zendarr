@@ -1,5 +1,5 @@
 services:
-  theoriarr:
+  zendarr:
     build:
       context: .
       dockerfile: Dockerfile
@@ -7,16 +7,16 @@ services:
         # Release (default) or Debug. Debug enables the debug-only, anonymous
         # diagnostics dump: `CONFIGURATION=Debug docker compose up -d --build`.
         CONFIGURATION: ${CONFIGURATION:-Release}
-    image: magicbotalex2/theoriarr:${CONFIGURATION:-latest}
-    container_name: theoriarr
+    image: magicbotalex2/zendarr:${CONFIGURATION:-latest}
+    container_name: zendarr
     restart: unless-stopped
     ports:
-      # The one unified Theoriarr listener: UI + both API domains
+      # The one unified Zendarr listener: UI + both API domains
       # (selected per request by API key).
-      - "${THEORIARR_PORT:-6868}:${THEORIARR_PORT:-6868}"
+      - "${ZENDARR_PORT:-6868}:${ZENDARR_PORT:-6868}"
     environment:
-      THEORIARR_DATA: /data
-      THEORIARR_PORT: ${THEORIARR_PORT:-6868}
+      ZENDARR_DATA: /data
+      ZENDARR_PORT: ${ZENDARR_PORT:-6868}
       # UID/GID the service runs as. The entrypoint starts as root, remaps the
       # `app` user to these ids and repairs the mounted volumes' ownership, then
       # drops to them before running the service, so the running process is
@@ -27,18 +27,18 @@ services:
       TZ: ${TZ:-UTC}
       # Set to 1/true/yes to disable the login page (no authentication). The
       # API-key auth (Prowlarr/Jellyseerr) is unaffected.
-      THEORIARR_DISABLE_AUTH: ${THEORIARR_DISABLE_AUTH:-false}
+      ZENDARR_DISABLE_AUTH: ${ZENDARR_DISABLE_AUTH:-false}
       # Transcode working folder (large temp files). It lives in its own volume
       # below so it survives restarts; point it at another mounted path to move
       # it (e.g. a fast SSD).
-      THEORIARR_TRANSCODE_TEMP_FOLDER: ${THEORIARR_TRANSCODE_TEMP_FOLDER:-/transcode}
+      ZENDARR_TRANSCODE_TEMP_FOLDER: ${ZENDARR_TRANSCODE_TEMP_FOLDER:-/transcode}
     volumes:
       # Config, databases, logs and media metadata.
-      - theoriarr-data:/data
+      - zendarr-data:/data
       # Transcode working folder, kept out of the config volume. To put it on a
       # specific host disk instead, replace with a bind mount:
       #   - /path/on/host/transcode:/transcode
-      - theoriarr-transcode:/transcode
+      - zendarr-transcode:/transcode
     # Media compression (Settings -> Compression) uses the ffmpeg bundled in the
     # image. To expose GPUs to the container, uncomment the blocks below:
     #
@@ -66,12 +66,12 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - curl -fsS "http://localhost:${THEORIARR_PORT:-6868}/ping" || exit 1
+        - curl -fsS "http://localhost:${ZENDARR_PORT:-6868}/ping" || exit 1
       interval: 30s
       timeout: 5s
       start_period: 90s
       retries: 5
 
 volumes:
-  theoriarr-data:
-  theoriarr-transcode:
+  zendarr-data:
+  zendarr-transcode:

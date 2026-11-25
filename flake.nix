@@ -1,5 +1,5 @@
 {
-  description = "Theoriarr — one unified backend and one UI for movies, TV and anime";
+  description = "Zendarr — one unified backend and one UI for movies, TV and anime";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -24,7 +24,7 @@
         let
           lib = pkgs.lib;
 
-          # The unified backend targets net10.0 (src/Theoriarr.Series pins SDK
+          # The unified backend targets net10.0 (src/Zendarr.Series pins SDK
           # 10.0.401 via global.json). The retired Movies tree is no longer
           # built, so only the .NET 10 SDK is needed.
           dotnet = pkgs.writeShellScriptBin "dotnet" ''
@@ -71,16 +71,16 @@
 
           # `nix run` attaches to the service logs in the foreground; Ctrl+C
           # stops everything.
-          run = mkApp "theoriarr" "theoriarr.sh" "--attach";
-          build = mkApp "theoriarr-build" "build.sh" "";
-          test = mkApp "theoriarr-test" "test.sh" "";
-          stop = mkApp "theoriarr-stop" "theoriarr-stop.sh" "";
+          run = mkApp "zendarr" "zendarr.sh" "--attach";
+          build = mkApp "zendarr-build" "build.sh" "";
+          test = mkApp "zendarr-test" "test.sh" "";
+          stop = mkApp "zendarr-stop" "zendarr-stop.sh" "";
 
           # Compiles the unified backend and the unified SPA and installs the
           # output tree. Needs network for NuGet + yarn, so it builds with the
           # sandbox disabled (see nix.conf).
-          theoriarr = pkgs.stdenv.mkDerivation (finalAttrs: {
-            pname = "theoriarr";
+          zendarr = pkgs.stdenv.mkDerivation (finalAttrs: {
+            pname = "zendarr";
             version = "0.1.0";
             src = ./.;
 
@@ -110,21 +110,21 @@
               mkdir -p "$out"
 
               # One backend: the unified engine.
-              mkdir -p "$out/src/Theoriarr.Series"
-              cp -a src/Theoriarr.Series/_output "$out/src/Theoriarr.Series/_output"
+              mkdir -p "$out/src/Zendarr.Series"
+              cp -a src/Zendarr.Series/_output "$out/src/Zendarr.Series/_output"
 
               # One UI: the unified SPA.
-              mkdir -p "$out/src/Theoriarr.Web/_output"
-              cp -a src/Theoriarr.Web/_output/UI "$out/src/Theoriarr.Web/_output/UI"
+              mkdir -p "$out/src/Zendarr.Web/_output"
+              cp -a src/Zendarr.Web/_output/UI "$out/src/Zendarr.Web/_output/UI"
 
               # Stage the unified UI into the backend's served UI folder
               # (<StartUpFolder>/UI) so the backend serves it directly at root.
-              rm -rf "$out/src/Theoriarr.Series/_output/net10.0/UI"
-              mkdir -p "$out/src/Theoriarr.Series/_output/net10.0/UI"
-              cp -a src/Theoriarr.Web/_output/UI/. "$out/src/Theoriarr.Series/_output/net10.0/UI/"
+              rm -rf "$out/src/Zendarr.Series/_output/net10.0/UI"
+              mkdir -p "$out/src/Zendarr.Series/_output/net10.0/UI"
+              cp -a src/Zendarr.Web/_output/UI/. "$out/src/Zendarr.Series/_output/net10.0/UI/"
 
               cp -a \
-                theoriarr.sh theoriarr-stop.sh build.sh test.sh \
+                zendarr.sh zendarr-stop.sh build.sh test.sh \
                 Logo README.md LICENSE NOTICE "$out/"
               runHook postInstall
             '';
@@ -143,7 +143,7 @@
             build
             test
             stop
-            theoriarr
+            zendarr
             dotnet
             ;
         };
@@ -162,7 +162,7 @@
               export NODE_EXTRA_CA_CERTS="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
               export GIT_SSL_CAINFO="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
               export CURL_CA_BUNDLE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-              echo "Theoriarr dev shell"
+              echo "Zendarr dev shell"
               echo "  dotnet: $(dotnet --version 2>/dev/null || echo '(missing)')"
               echo "  node:   $(node --version 2>/dev/null || echo '(missing)')"
               echo "  yarn:   $(yarn --version 2>/dev/null || echo '(missing)')"
@@ -181,8 +181,8 @@
           tools = mkTools pkgs;
         in
         {
-          default = tools.theoriarr;
-          theoriarr = tools.theoriarr;
+          default = tools.zendarr;
+          zendarr = tools.zendarr;
           run = tools.run;
         }
       );
@@ -195,28 +195,28 @@
         {
           default = {
             type = "app";
-            program = "${tools.run}/bin/theoriarr";
-            meta.description = "Start Theoriarr (foreground)";
+            program = "${tools.run}/bin/zendarr";
+            meta.description = "Start Zendarr (foreground)";
           };
           build = {
             type = "app";
-            program = "${tools.build}/bin/theoriarr-build";
-            meta.description = "Build the Theoriarr backend + UI";
+            program = "${tools.build}/bin/zendarr-build";
+            meta.description = "Build the Zendarr backend + UI";
           };
           test = {
             type = "app";
-            program = "${tools.test}/bin/theoriarr-test";
-            meta.description = "Run the Theoriarr test suite";
+            program = "${tools.test}/bin/zendarr-test";
+            meta.description = "Run the Zendarr test suite";
           };
           stop = {
             type = "app";
-            program = "${tools.stop}/bin/theoriarr-stop";
-            meta.description = "Stop Theoriarr";
+            program = "${tools.stop}/bin/zendarr-stop";
+            meta.description = "Stop Zendarr";
           };
         }
       );
 
-      # NixOS module: `services.theoriarr`.
+      # NixOS module: `services.zendarr`.
       nixosModules.default =
         {
           config,
@@ -226,28 +226,28 @@
         }:
         let
           tools = mkTools pkgs;
-          cfg = config.services.theoriarr;
+          cfg = config.services.zendarr;
         in
         {
-          options.services.theoriarr = {
-            enable = lib.mkEnableOption "Theoriarr";
+          options.services.zendarr = {
+            enable = lib.mkEnableOption "Zendarr";
 
             package = lib.mkOption {
               type = lib.types.package;
-              default = tools.theoriarr;
-              defaultText = lib.literalExpression "theoriarr.packages.\${system}.theoriarr";
-              description = "The Theoriarr package to use.";
+              default = tools.zendarr;
+              defaultText = lib.literalExpression "zendarr.packages.\${system}.zendarr";
+              description = "The Zendarr package to use.";
             };
 
             user = lib.mkOption {
               type = lib.types.str;
-              default = "theoriarr";
+              default = "zendarr";
               description = "User the service runs as.";
             };
 
             group = lib.mkOption {
               type = lib.types.str;
-              default = "theoriarr";
+              default = "zendarr";
               description = "Group the service runs as.";
             };
 
@@ -272,7 +272,7 @@
             environmentFile = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
-              example = "/run/secrets/theoriarr.env";
+              example = "/run/secrets/zendarr.env";
               description = "Optional runtime environment file (for example secrets).";
             };
           };
@@ -281,12 +281,12 @@
             users.users.${cfg.user} = {
               isSystemUser = true;
               group = cfg.group;
-              home = "/var/lib/theoriarr";
+              home = "/var/lib/zendarr";
             };
             users.groups.${cfg.group} = { };
 
-            systemd.services.theoriarr = {
-              description = "Theoriarr unified Sonarr/Radarr backend";
+            systemd.services.zendarr = {
+              description = "Zendarr unified Sonarr/Radarr backend";
               wantedBy = [ "multi-user.target" ];
               wants = [ "network-online.target" ];
               after = [ "network-online.target" ];
@@ -297,18 +297,18 @@
               ];
 
               serviceConfig = {
-                ExecStart = "${tools.dotnet}/bin/dotnet ${cfg.package}/src/Theoriarr.Series/_output/net10.0/Sonarr.dll --data /var/lib/theoriarr --nobrowser";
+                ExecStart = "${tools.dotnet}/bin/dotnet ${cfg.package}/src/Zendarr.Series/_output/net10.0/Sonarr.dll --data /var/lib/zendarr --nobrowser";
                 User = cfg.user;
                 Group = cfg.group;
-                StateDirectory = "theoriarr";
-                WorkingDirectory = "/var/lib/theoriarr";
+                StateDirectory = "zendarr";
+                WorkingDirectory = "/var/lib/zendarr";
                 Environment = [
-                  "THEORIARR_DATA=/var/lib/theoriarr"
-                  "THEORIARR_PORT=${toString cfg.port}"
-                  "Theoriarr__Server__Port=${toString cfg.port}"
-                  "Theoriarr__Server__UrlBase="
-                  "THEORIARR_TRANSCODE_TEMP_FOLDER=/var/lib/theoriarr/transcode"
-                  "THEORIARR_DISABLE_AUTH=${if cfg.disableAuth then "true" else "false"}"
+                  "ZENDARR_DATA=/var/lib/zendarr"
+                  "ZENDARR_PORT=${toString cfg.port}"
+                  "Zendarr__Server__Port=${toString cfg.port}"
+                  "Zendarr__Server__UrlBase="
+                  "ZENDARR_TRANSCODE_TEMP_FOLDER=/var/lib/zendarr/transcode"
+                  "ZENDARR_DISABLE_AUTH=${if cfg.disableAuth then "true" else "false"}"
                 ];
                 EnvironmentFile = lib.optional (cfg.environmentFile != null) cfg.environmentFile;
                 Restart = "on-failure";
@@ -325,7 +325,7 @@
                   "AF_INET6"
                   "AF_UNIX"
                 ];
-                ReadWritePaths = [ "/var/lib/theoriarr" ];
+                ReadWritePaths = [ "/var/lib/zendarr" ];
                 CapabilityBoundingSet = "";
                 AmbientCapabilities = "";
               };

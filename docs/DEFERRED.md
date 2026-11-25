@@ -1,6 +1,6 @@
-# Theoriarr — Deferred by Choice & Accepted Limitations
+# Zendarr — Deferred by Choice & Accepted Limitations
 
-> Deliberately-not-done items that are fully understood and cheap to act on **if a Theoriarr user
+> Deliberately-not-done items that are fully understood and cheap to act on **if a Zendarr user
 > asks for it**. Two kinds live here:
 >
 > - **Deferred features** (`DF#`) — not implemented; the exact fix is recorded so a future agent can
@@ -30,7 +30,7 @@ the movie refreshes (it is Sonarr's task list verbatim):
 ```
 new ScheduledTask { Interval = 12 * 60, TypeName = typeof(RefreshSeriesCommand).FullName }
 ```
-`src/Theoriarr.Series/src/NzbDrone.Core/Jobs/TaskManager.cs:100-104`
+`src/Zendarr.Series/src/NzbDrone.Core/Jobs/TaskManager.cs:100-104`
 
 Upstream Radarr additionally schedules `RefreshMovieCommand` and `RefreshCollectionsCommand` at
 12h. Startup deletes any scheduled task that is absent from that default list
@@ -86,7 +86,7 @@ and free-space assumptions and needs an opt-in policy model.
 **Fix if requested.** Add a `TranscodeScheduledCommand : Command` that queues jobs for a filter
 (e.g. files above N GB / older than X / matching a tag), register it in
 `Jobs/TaskManager.cs`'s `defaultTasks` (evidence: the `RefreshSeriesCommand` entry
-`src/Theoriarr.Series/src/NzbDrone.Core/Jobs/TaskManager.cs:100-104`), and expose the schedule
+`src/Zendarr.Series/src/NzbDrone.Core/Jobs/TaskManager.cs:100-104`), and expose the schedule
 in the compression settings resource.
 
 **Verify.** Task appears in `GET /api/v3/system/task`; a manual run queues the expected files and
@@ -127,13 +127,13 @@ application shutdown.
 
 ### DF6 — Low — DEFERRED — backend logo is still upstream Sonarr's
 
-**What.** `src/Theoriarr.Series/Logo/*` (including `Sonarr.ico`) is byte-identical to upstream
-Sonarr, so the backend ships Sonarr's icon set instead of a Theoriarr one.
+**What.** `src/Zendarr.Series/Logo/*` (including `Sonarr.ico`) is byte-identical to upstream
+Sonarr, so the backend ships Sonarr's icon set instead of a Zendarr one.
 
 **Why deferred.** Cosmetic only; it needs new artwork (16→1024 PNG + `.ico` + `.icns`) before it can
 be applied, and the existing icons are valid and correctly licensed (GPL-3.0).
 
-**Fix if requested.** Replace the icon set with Theoriarr artwork, rename `Sonarr.ico`, and update
+**Fix if requested.** Replace the icon set with Zendarr artwork, rename `Sonarr.ico`, and update
 the installer/SPA references if the filenames change.
 
 **Verify.** Build clean; the app icon, installer and web favicon show the new artwork.
@@ -146,14 +146,14 @@ the installer/SPA references if the filenames change.
 > do not "fix" them without a user request, and do not treat them as bugs.
 
 ### B1 — Low — accepted divergence — Movie `titleSlug` for library rows is the internal id, not the TMDB id
-`src/Theoriarr.Series/src/Sonarr.Api.V3/Movies/MovieResource.cs:157` returns the internal row id
+`src/Zendarr.Series/src/Sonarr.Api.V3/Movies/MovieResource.cs:157` returns the internal row id
 for library rows (`Id > 0`); upstream Radarr returns the TMDB id
 (`Radarr/src/Radarr.Api.V3/Movies/MovieResource.cs:151`). Jellyseerr persists `titleSlug` as the
 "open in Radarr" slug (`seerr/server/subscriber/MediaRequestSubscriber.ts:398-399`,
 `seerr/server/lib/scanners/radarr/index.ts:154`) and builds `${externalUrl}/movie/${titleSlug}`
 (`seerr/server/entity/Media.ts:319-337`). **This is deliberate**: the unified SPA resolves
 `/movie/:id` against the internal id, and ids and TMDB ids are both numeric and can collide, so
-the two cannot share one route. The default Jellyseerr flow (externalUrl = Theoriarr) works; only
+the two cannot share one route. The default Jellyseerr flow (externalUrl = Zendarr) works; only
 pointing `externalUrl` at a *genuine* Radarr UI would 404. Changing it would require reworking
 the SPA's movie routing and every internal movie link.
 
@@ -191,7 +191,7 @@ authentication (it is no longer `[AllowAnonymous]`), so it is not reachable in r
 it debug-only. Postgres table enumeration is
 basic (`pg_tables`, `public` schema). **If more detail is needed**, raise the log level
 (`LogLevel` in Settings → General, or `config.xml`), reproduce, then download the dump: it already
-includes `logs/theoriarr.txt`, `theoriarr.debug.txt`, `theoriarr.trace.txt` and `UpdateLogs/*`
+includes `logs/zendarr.txt`, `zendarr.debug.txt`, `zendarr.trace.txt` and `UpdateLogs/*`
 whenever those files exist.
 
 ### U22 — Low — accepted tradeoff — fuzzy scene-alias matching can attach a release to a similarly named series
@@ -216,8 +216,8 @@ still be attached to the parent; raise `MinMatchLength` / `MinRunnerUpRatio` in
 ### U23 — Low — accepted — a few tests use real (copyrighted) works from an out-of-repo fixture
 Tests that validate against real-world naming reference real series/release titles. Those values
 are kept out of the repository in an optional fixture file: `NzbDrone.Core.Test/Framework/ExternalTestFixtures.cs`
-loads `theoriarr-test-fixtures.json` (path from `THEORIARR_TEST_FIXTURES`, else
-`../theoriarr-test-fixtures.json` beside the repo root) — no file in git and the name is gitignored.
+loads `zendarr-test-fixtures.json` (path from `ZENDARR_TEST_FIXTURES`, else
+`../zendarr-test-fixtures.json` beside the repo root) — no file in git and the name is gitignored.
 When the file is absent the affected tests pass without asserting. Add new real-world values to that
 file (and the `ExternalTestFixtureData` model) rather than hard-coding them in tests.
 
@@ -225,7 +225,7 @@ file (and the `ExternalTestFixtureData` model) rather than hard-coding them in t
 On startup `TranscodeService.RecoverInterruptedJobs` marks any `Running` job `Failed`
 ("Interrupted by a restart") and deletes its working folder; the original file is never touched.
 A long encode therefore restarts from zero. Re-queue the file to retry.
-(`src/Theoriarr.Series/src/NzbDrone.Core/MediaFiles/Transcoding/TranscodeService.cs`.)
+(`src/Zendarr.Series/src/NzbDrone.Core/MediaFiles/Transcoding/TranscodeService.cs`.)
 
 ### C2 — Low — accepted scope — QSV-native and AMD AMF are unsupported
 Only NVIDIA NVENC, VA-API (AMD and Intel iGPUs alike — `VaapiBackend` enables any node whose
@@ -275,29 +275,29 @@ mistaken for an API-compat bug.
 
 ### Branding / identity — accepted
 
-**What.** Product identity is Theoriarr; all upstream attribution, license notices and API-compat
+**What.** Product identity is Zendarr; all upstream attribution, license notices and API-compat
 surfaces are preserved (Sonarr/Radarr API shapes, `Sonarr.*` names/namespaces, upstream-notice
 files).
 
-**Why accepted.** A balanced rebrand: the product name and SPA are Theoriarr, while Prowlarr /
+**Why accepted.** A balanced rebrand: the product name and SPA are Zendarr, while Prowlarr /
 Jellyseerr / Overseerr compatibility and the upstream GPL notices are untouched. See the README
 "Modification notice" for the legal framing.
 
 ### Architectural limitations (BY DESIGN)
 
 - **Single download-client store** — one `DownloadClients` row shared by both domains (see the
-  2026-09-23 fix). The unified design uses a **single shared category defaulting to `theoriarr`**;
+  2026-09-23 fix). The unified design uses a **single shared category defaulting to `zendarr`**;
   the media type of a download is determined by its grab history (authoritative for anything
-  Theoriarr grabbed) and by title parsing for manually added downloads, never by the category.
+  Zendarr grabbed) and by title parsing for manually added downloads, never by the category.
   `TvCategory`/`MovieCategory` stay as Sonarr/Radarr-compatible API fields (the movie category is
   hidden in the UI and falls back to the shared one), and no distinct TV vs movie client rows exist
   (and none are needed for the single-client setup).
-- **Single Prowlarr application** — register Theoriarr once (as Sonarr). Dual registration
+- **Single Prowlarr application** — register Zendarr once (as Sonarr). Dual registration
   (separate Sonarr + Radarr apps) is unsupported: the name-uniqueness rule rejects it / both
   apps would stomp one shared indexer record. Movie categories can be added by putting the `2xxx`
-  range in the single app's Sync Categories, but are no longer required: Theoriarr splits `2xxx` out
+  range in the single app's Sync Categories, but are no longer required: Zendarr splits `2xxx` out
   at search time and falls back to Radarr's standard `2xxx` set when none are configured.
-- **Jellyseerr must compare `appName`** — Theoriarr emits `appName` (in `/system/status`) and the
+- **Jellyseerr must compare `appName`** — Zendarr emits `appName` (in `/system/status`) and the
   `X-Application` response header, but the shared connection-test endpoints cannot reject a
   valid key belonging to the other domain because the client sends no domain hint. The remaining
   check belongs in `seerr/server/api/servarr/base.ts`; the 2026-09-21 audit confirmed seerr's

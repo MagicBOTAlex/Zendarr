@@ -1,4 +1,4 @@
-# Theoriarr TODO
+# Zendarr TODO
 
 Forward plan (updated 2026-10-03). Metadata is served by
 [Providarr](https://github.com/MagicBOTAlex/Providarr) (see `Providarr/PROGRESS.md`). Development

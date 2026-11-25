@@ -1,19 +1,19 @@
 # syntax=docker/dockerfile:1
 
-# Theoriarr image: builds the single unified backend (src/Theoriarr.Series,
-# .NET 10) plus the single unified SPA (src/Theoriarr.Web) and runs them on one
+# Zendarr image: builds the single unified backend (src/Zendarr.Series,
+# .NET 10) plus the single unified SPA (src/Zendarr.Web) and runs them on one
 # listener (:6868). No gateway, no reverse proxy, no second process.
 #
-#   build:   docker build -t theoriarr .
-#   run:     docker run --rm -p 6868:6868 -v theoriarr-data:/data theoriarr
+#   build:   docker build -t zendarr .
+#   run:     docker run --rm -p 6868:6868 -v zendarr-data:/data zendarr
 #   compose: docker compose up --build
 
 # Node is only needed to build the SPA; it is not part of the runtime image.
-# Pinned to the Node release declared in src/Theoriarr.Web/package.json.
+# Pinned to the Node release declared in src/Zendarr.Web/package.json.
 FROM node:24.19.0-bookworm-slim AS node
 
 # ---------------------------------------------------------------------------
-# Build stage: .NET SDK 10.0.401 (pinned by src/Theoriarr.Series/global.json)
+# Build stage: .NET SDK 10.0.401 (pinned by src/Zendarr.Series/global.json)
 # plus Node 24 / Yarn 1.22.22 for the React frontend.
 # ---------------------------------------------------------------------------
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS build
@@ -45,9 +45,9 @@ RUN apt-get update \
 WORKDIR /src
 
 # Prime frontend dependencies in their own layer so source edits don't refetch.
-COPY src/Theoriarr.Web/package.json src/Theoriarr.Web/yarn.lock src/Theoriarr.Web/.yarnrc src/Theoriarr.Web/
+COPY src/Zendarr.Web/package.json src/Zendarr.Web/yarn.lock src/Zendarr.Web/.yarnrc src/Zendarr.Web/
 RUN --mount=type=cache,target=/usr/local/share/.cache/yarn,sharing=locked \
-    cd src/Theoriarr.Web \
+    cd src/Zendarr.Web \
     && yarn --version \
     && yarn install --frozen-lockfile --network-timeout 600000
 
@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
     CONFIGURATION=$CONFIGURATION ./build.sh
 
 # ---------------------------------------------------------------------------
-# Runtime stage: ASP.NET Core runtime 10, python3 (theoriarr.sh reads the API
+# Runtime stage: ASP.NET Core runtime 10, python3 (zendarr.sh reads the API
 # keys out of config.xml) and curl (healthcheck).
 # ---------------------------------------------------------------------------
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.12 AS runtime
@@ -74,8 +74,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
-    THEORIARR_DATA=/data \
-    THEORIARR_PORT=6868 \
+    ZENDARR_DATA=/data \
+    ZENDARR_PORT=6868 \
     PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 # ffmpeg powers media compression (NVENC / VA-API / software; resolved from PATH).
@@ -97,11 +97,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Keep the repo layout so theoriarr.sh's find_dll resolves exactly as it does
+# Keep the repo layout so zendarr.sh's find_dll resolves exactly as it does
 # from a normal checkout.
-COPY --from=build /src/src/Theoriarr.Series/_output ./src/Theoriarr.Series/_output
-COPY --from=build /src/src/Theoriarr.Web/_output/UI ./src/Theoriarr.Web/_output/UI
-COPY theoriarr.sh theoriarr-stop.sh ./
+COPY --from=build /src/src/Zendarr.Series/_output ./src/Zendarr.Series/_output
+COPY --from=build /src/src/Zendarr.Web/_output/UI ./src/Zendarr.Web/_output/UI
+COPY zendarr.sh zendarr-stop.sh ./
 COPY Logo ./Logo
 # License/attribution notices must accompany GPL binary redistribution.
 COPY LICENSE NOTICE ./
@@ -114,17 +114,17 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # for the service itself.
 RUN mkdir -p /data /transcode \
  && chown -R app:app /app /data /transcode \
- && chmod +x ./theoriarr.sh ./theoriarr-stop.sh /usr/local/bin/docker-entrypoint.sh
+ && chmod +x ./zendarr.sh ./zendarr-stop.sh /usr/local/bin/docker-entrypoint.sh
 
 VOLUME ["/data"]
 
 EXPOSE 6868
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
-  CMD curl -fsS "http://localhost:${THEORIARR_PORT:-6868}/ping" || exit 1
+  CMD curl -fsS "http://localhost:${ZENDARR_PORT:-6868}/ping" || exit 1
 
 # No USER directive: the entrypoint starts as root, remaps PUID/PGID and chowns
 # the volumes, then drops to the non-root service user with setpriv (preserving
 # supplementary groups for GPU access).
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["./theoriarr.sh", "--attach"]
+CMD ["./zendarr.sh", "--attach"]

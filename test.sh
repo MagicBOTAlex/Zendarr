@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Theoriarr unit tests: runs the unified backend's unit (non-integration) test
+# Zendarr unit tests: runs the unified backend's unit (non-integration) test
 # projects.
 #
 # Usage:
@@ -27,7 +27,7 @@ run_suite() {
   done
 }
 
-run_suite Theoriarr.Series \
+run_suite Zendarr.Series \
   NzbDrone.Core.Test/Sonarr.Core.Test.csproj \
   NzbDrone.Common.Test/Sonarr.Common.Test.csproj \
   NzbDrone.Api.Test/Sonarr.Api.Test.csproj \
@@ -37,4 +37,4 @@ run_suite Theoriarr.Series \
   NzbDrone.Libraries.Test/Sonarr.Libraries.Test.csproj
 
 echo
-echo "Theoriarr test suites complete."
+echo "Zendarr test suites complete."

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Theoriarr build.
+# Zendarr build.
 #
 # There is ONE backend and ONE UI:
-#   * backend: src/Theoriarr.Series (the unified engine — Sonarr-derived tree,
+#   * backend: src/Zendarr.Series (the unified engine — Sonarr-derived tree,
 #     now hosting the folded-in Radarr/Movies domain; one listener, one DB)
-#   * UI:      src/Theoriarr.Web    (the single unified Theoriarr SPA)
+#   * UI:      src/Zendarr.Web    (the single unified Zendarr SPA)
 #
 # Usage:
 #   ./build.sh                 # backend + unified UI
@@ -22,11 +22,11 @@ export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}"
 SKIP_FRONTEND="${SKIP_FRONTEND:-0}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 
-BACKEND_TREE="Theoriarr.Series"
+BACKEND_TREE="Zendarr.Series"
 BACKEND_SLN="Sonarr.sln"
 
 FRONTENDS=(
-  "Theoriarr.Web"
+  "Zendarr.Web"
 )
 
 if [ ! -x /root/.dotnet/dotnet ] && ! command -v dotnet >/dev/null 2>&1; then
@@ -61,4 +61,4 @@ if [ "$SKIP_FRONTEND" != "1" ]; then
 fi
 
 echo
-echo "Theoriarr build complete. Run ./theoriarr.sh to start the unified backend on :6868."
+echo "Zendarr build complete. Run ./zendarr.sh to start the unified backend on :6868."

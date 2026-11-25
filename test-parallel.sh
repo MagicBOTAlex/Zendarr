@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Theoriarr unit tests, run in PARALLEL.
+# Zendarr unit tests, run in PARALLEL.
 #
 # The test projects are independent assemblies, so instead of waiting for
 # each suite in turn (./test.sh) this builds the solution once and then runs all
@@ -18,12 +18,12 @@ export PATH="$PATH:/usr/local/bin:/root/.dotnet"
 export DOTNET_ROOT="${DOTNET_ROOT:-/root/.dotnet}"
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 
-TREE="$ROOT/src/Theoriarr.Series"
+TREE="$ROOT/src/Zendarr.Series"
 SLN_DIR="$TREE/src"
 FILTER="Category!=IntegrationTest&Category!=AutomationTest&Category!=ManualTest"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 
-LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/theoriarr-tests.XXXXXX")"
+LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/zendarr-tests.XXXXXX")"
 trap 'rm -rf "$LOGDIR"' EXIT
 
 if [ "$SKIP_BUILD" != "1" ]; then
@@ -82,8 +82,8 @@ done
 
 echo
 if [ "$rc" = "0" ]; then
-  echo "All Theoriarr test suites passed (parallel)."
+  echo "All Zendarr test suites passed (parallel)."
 else
-  echo "One or more Theoriarr test suites FAILED (parallel)."
+  echo "One or more Zendarr test suites FAILED (parallel)."
 fi
 exit "$rc"

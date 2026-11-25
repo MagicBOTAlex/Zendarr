@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Theoriarr container entrypoint (LinuxServer.io-style).
+# Zendarr container entrypoint (LinuxServer.io-style).
 #
 # The container starts as root and drops to the non-root service user. On start
 # it reads PUID/PGID, remaps the image's `app` user to those ids, fixes the
@@ -19,12 +19,12 @@ set -euo pipefail
 
 PUID="${PUID:-1654}"
 PGID="${PGID:-1654}"
-DATA="${THEORIARR_DATA:-/data}"
+DATA="${ZENDARR_DATA:-/data}"
 
 # Transcode working folder (large temp files). Defaults to <data>/transcode; a
-# dedicated mount can be pointed at with THEORIARR_TRANSCODE_TEMP_FOLDER, and
+# dedicated mount can be pointed at with ZENDARR_TRANSCODE_TEMP_FOLDER, and
 # must be handed to the service user just like DATA.
-TRANSCODE="${THEORIARR_TRANSCODE_TEMP_FOLDER:-$DATA/transcode}"
+TRANSCODE="${ZENDARR_TRANSCODE_TEMP_FOLDER:-$DATA/transcode}"
 
 export HOME="${HOME:-/home/app}"
 

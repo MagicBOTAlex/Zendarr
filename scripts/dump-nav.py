@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Navigate a Theoriarr diagnostics dump (a single huge .txt) without loading it.
+"""Navigate a Zendarr diagnostics dump (a single huge .txt) without loading it.
 
 The dump written by NzbDrone.Core/Diagnostics/DiagnosticsService.cs is tens to
 hundreds of MB, so opening it in an editor or grepping the whole thing wastes
@@ -18,7 +18,7 @@ Usage:
   dump-nav.py DUMP tail SECTION [N]         last N lines of a section (default 40)
 
 SECTION is a case-insensitive regex matched against the section title
-(e.g. "download queue", "database: theoriarr", "config", "log files").
+(e.g. "download queue", "database: zendarr", "config", "log files").
 An index is cached next to the dump as "<dump>.nav.json" (keyed on size+mtime).
 """
 import argparse
@@ -254,7 +254,7 @@ def main(argv=None):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
     parser = argparse.ArgumentParser(
-        description="Navigate a Theoriarr diagnostics dump.",
+        description="Navigate a Zendarr diagnostics dump.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

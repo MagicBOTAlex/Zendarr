@@ -18,7 +18,7 @@ Directory.Solution.targets
 Thumbs.db
 
 # Out-of-repo real-world test fixtures (see docs/PROBLEMS.md U23)
-theoriarr-test-fixtures.json
+zendarr-test-fixtures.json
 
 # Nix
 /result
