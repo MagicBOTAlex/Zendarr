@@ -13,10 +13,12 @@ namespace NzbDrone.Common.Extensions
     {
         private const string APP_CONFIG_FILE = "config.xml";
         private const string DB = "zendarr.db";
+        private const string DB_LEGACY_THEORIARR = "theoriarr.db";
         private const string DB_OLD = "nzbdrone.db";
         private const string DB_LEGACY_SERIES = "sonarr.db";
         private const string DB_LEGACY_MOVIES = "radarr.db";
         private const string DB_RESTORE = "zendarr.restore";
+        private const string DB_RESTORE_LEGACY_THEORIARR = "theoriarr.restore";
         private const string DB_RESTORE_LEGACY_SERIES = "sonarr.restore";
         private const string DB_RESTORE_LEGACY_MOVIES = "radarr.restore";
         private const string LOG_DB = "logs.db";
@@ -387,7 +389,7 @@ namespace NzbDrone.Common.Extensions
 
         public static string GetDatabase(this IAppFolderInfo appFolderInfo)
         {
-            return GetExistingOrPrimary(appFolderInfo, DB, DB_LEGACY_SERIES, DB_LEGACY_MOVIES, DB_OLD);
+            return GetExistingOrPrimary(appFolderInfo, DB, DB_LEGACY_THEORIARR, DB_LEGACY_SERIES, DB_LEGACY_MOVIES, DB_OLD);
         }
 
         public static string GetV0Database(this IAppFolderInfo appFolderInfo)
@@ -402,7 +404,7 @@ namespace NzbDrone.Common.Extensions
 
         public static string GetDatabaseRestore(this IAppFolderInfo appFolderInfo)
         {
-            return GetExistingOrPrimary(appFolderInfo, DB_RESTORE, DB_RESTORE_LEGACY_SERIES, DB_RESTORE_LEGACY_MOVIES);
+            return GetExistingOrPrimary(appFolderInfo, DB_RESTORE, DB_RESTORE_LEGACY_THEORIARR, DB_RESTORE_LEGACY_SERIES, DB_RESTORE_LEGACY_MOVIES);
         }
 
         public static string GetLogDatabase(this IAppFolderInfo appFolderInfo)

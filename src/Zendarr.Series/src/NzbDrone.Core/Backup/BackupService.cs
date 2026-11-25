@@ -162,6 +162,12 @@ namespace NzbDrone.Core.Backup
                         _diskProvider.MoveFile(file, _appFolderInfo.GetDatabaseRestore(), true);
                         restoredFile = true;
                     }
+
+                    if (fileName.Equals("theoriarr.db", StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        _diskProvider.MoveFile(file, _appFolderInfo.GetDatabaseRestore(), true);
+                        restoredFile = true;
+                    }
                 }
 
                 if (!restoredFile)

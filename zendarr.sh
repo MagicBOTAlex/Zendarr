@@ -39,7 +39,7 @@ if [ -d /root/.dotnet ]; then
 fi
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 
-mkdir -p "$DATA/Zendarr" "$LOGS"
+mkdir -p "$LOGS"
 
 find_dll() {
   ls "$ROOT"/src/"$1"/_output/net*/Sonarr.dll 2>/dev/null | head -1
@@ -107,9 +107,71 @@ wait_for_port() {
   return 1
 }
 
+# One-time migration from the pre-rename Theoriarr data layout. The app was
+# renamed to Zendarr, so the data directory and SQLite filenames changed. This
+# keeps the owner's existing library/config without a manual move. It runs only
+# when the backend is not already listening and only when the new data dir does
+# not already contain data; if both dirs exist with content it refuses to merge.
+migrate_legacy_data() {
+  local old="$DATA/Theoriarr"
+  local new="$DATA/Zendarr"
+
+  [ -d "$old" ] || return 0
+
+  if [ -e "$new" ]; then
+    if [ -d "$new" ] && [ -z "$(ls -A "$new" 2>/dev/null)" ]; then
+      if ! rmdir "$new" 2>/dev/null; then
+        echo "error: cannot remove empty $new; refusing to start with empty data" >&2
+        exit 1
+      fi
+    else
+      echo "warning: both $old and $new exist; leaving them alone (not merging)" >&2
+      return 0
+    fi
+  fi
+
+  mv "$old" "$new"
+  echo "Migrated pre-rename data: $old -> $new"
+
+  # Rename the pre-rename runtime files. Only rename when the target is absent
+  # so a partially migrated directory is never overwritten.
+  local suffix src dst
+  for suffix in "" "-journal" "-wal" "-shm"; do
+    src="$new/theoriarr.db$suffix"
+    dst="$new/zendarr.db$suffix"
+    if [ -e "$src" ] && [ ! -e "$dst" ]; then
+      mv "$src" "$dst"
+      echo "Renamed $(basename "$src") -> $(basename "$dst")"
+    fi
+  done
+
+  src="$new/theoriarr.restore"
+  dst="$new/zendarr.restore"
+  if [ -e "$src" ] && [ ! -e "$dst" ]; then
+    mv "$src" "$dst"
+    echo "Renamed theoriarr.restore -> zendarr.restore"
+  fi
+
+  if [ -e "$new/theoriarr.pid" ]; then
+    rm -f "$new/theoriarr.pid"
+    echo "Removed stale theoriarr.pid"
+  fi
+
+  for src in "$new"/logs/theoriarr*.log; do
+    [ -e "$src" ] || continue
+    dst="$new/logs/zendarr${src##*/theoriarr}"
+    if [ ! -e "$dst" ]; then
+      mv "$src" "$dst"
+      echo "Renamed logs/$(basename "$src") -> logs/$(basename "$dst")"
+    fi
+  done
+}
+
 if is_listening "$PORT"; then
   echo "Zendarr already listening on :$PORT"
 else
+  migrate_legacy_data
+  mkdir -p "$DATA/Zendarr"
   echo "Starting Zendarr unified backend (:$PORT, UrlBase='')..."
   start_backend
 fi
