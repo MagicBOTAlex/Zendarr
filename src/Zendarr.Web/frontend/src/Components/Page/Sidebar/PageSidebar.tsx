@@ -145,6 +145,12 @@ const LINKS: SidebarItem[] = [
   },
 
   {
+    iconName: icons.MOVIE_FILE,
+    title: () => translate('AudioTracks'),
+    to: '/audio-tracks',
+  },
+
+  {
     iconName: icons.SETTINGS,
     title: () => translate('Settings'),
     to: '/settings',
