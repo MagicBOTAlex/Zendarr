@@ -6,14 +6,14 @@ import { useUiSettingsValues } from 'Settings/UI/useUiSettings';
 import formatDate from 'Utilities/Date/formatDate';
 import formatBytes from 'Utilities/Number/formatBytes';
 import translate from 'Utilities/String/translate';
-import {
-  getTranscodeStatusClass,
-  getTranscodeStatusLabel,
-} from './transcodeStatus';
+import { TRANSCODE_TONE_TEXT_CLASSES } from './transcodeStatus';
+import TranscodeStatusBadge from './TranscodeStatusBadge';
 import { TranscodeJob, useCreateTranscodeJobs } from './useTranscodeJobs';
 
 const ROW_CLASS =
-  'flex flex-wrap items-center gap-x-[8px] gap-y-[2px] border-b border-[var(--borderColor)] px-[6px] py-[3px] text-[12px] leading-[1.4] last:border-b-0';
+  'flex flex-wrap items-center gap-x-[8px] gap-y-[3px] border-b border-[var(--borderColor)] px-[16px] py-[8px] text-[12px] leading-[1.4] last:border-b-0 hover:bg-[var(--tableRowHoverBackgroundColor)]';
+const ERROR_CLASS =
+  'w-full break-words text-[11px] leading-[1.4] text-[light-dark(var(--alertDangerColor),var(--dangerColor))]';
 
 interface TranscodeHistoryRowProps {
   job: TranscodeJob;
@@ -103,15 +103,11 @@ function TranscodeHistoryRow({
       className={ROW_CLASS}
       title={`${job.sourcePath}${deviceName ? ` (${deviceName})` : ''}`}
     >
-      <span
-        className={`w-[68px] shrink-0 font-semibold ${getTranscodeStatusClass(
-          job.status
-        )}`}
-      >
-        {getTranscodeStatusLabel(job.status)}
-      </span>
+      <TranscodeStatusBadge status={job.status} />
 
-      <span className="min-w-0 grow basis-[160px] truncate">{sourceName}</span>
+      <span className="min-w-0 grow basis-[160px] truncate font-medium text-[var(--textColor)]">
+        {sourceName}
+      </span>
 
       {planLabel ? (
         <span className="shrink-0 text-[var(--helpTextColor)]">
@@ -122,7 +118,13 @@ function TranscodeHistoryRow({
       <span className="shrink-0 text-[var(--helpTextColor)]">
         {job.videoCodec ? `${job.videoCodec.toUpperCase()} · ` : ''}
         {size}
-        {savedPercent ? ` (−${savedPercent}%)` : ''}
+        {savedPercent ? (
+          <span
+            className={`ml-[4px] font-semibold ${TRANSCODE_TONE_TEXT_CLASSES.success}`}
+          >
+            −{savedPercent}%
+          </span>
+        ) : null}
       </span>
 
       {dateLabel ? (
@@ -134,16 +136,13 @@ function TranscodeHistoryRow({
       {requeueControl}
 
       {createError ? (
-        <span className="w-full text-[var(--alertDangerColor)]">
+        <span className={ERROR_CLASS}>
           {translate('TranscodeActionFailed')}
         </span>
       ) : null}
 
       {job.error ? (
-        <span
-          className="w-full truncate text-[var(--alertDangerColor)]"
-          title={job.error}
-        >
+        <span className={ERROR_CLASS} title={job.error}>
           {job.error}
         </span>
       ) : null}
