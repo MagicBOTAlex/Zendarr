@@ -7,6 +7,7 @@ using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.Download.History;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Parser.Model;
@@ -77,14 +78,63 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
 
         private void GivenHistoryItem(string downloadId, string sourceTitle, QualityModel quality, EpisodeHistoryEventType eventType)
         {
+            GivenHistoryItem(downloadId, sourceTitle, quality, eventType, DateTime.UtcNow);
+        }
+
+        private void GivenHistoryItem(string downloadId, string sourceTitle, QualityModel quality, EpisodeHistoryEventType eventType, DateTime date)
+        {
             _history.Add(new EpisodeHistory
                          {
                              DownloadId = downloadId,
                              SourceTitle = sourceTitle,
                              Quality = quality,
-                             Date = DateTime.UtcNow,
+                             Date = date,
                              EventType = eventType
                          });
+        }
+
+        private void GivenLatestDownloadHistory(string downloadId, DateTime date, DownloadHistoryEventType eventType)
+        {
+            Mocker.GetMock<IDownloadHistoryService>()
+                  .Setup(s => s.GetLatestDownloadHistoryItem(downloadId))
+                  .Returns(new DownloadHistory
+                           {
+                               DownloadId = downloadId,
+                               Date = date,
+                               EventType = eventType
+                           });
+        }
+
+        [Test]
+        public void should_reject_a_recent_grab_at_the_grab_boundary()
+        {
+            var downloadId = Guid.NewGuid().ToString().ToUpper();
+            var grabbedAt = DateTime.UtcNow.AddHours(-2);
+
+            _remoteEpisode.Release = Builder<ReleaseInfo>.CreateNew()
+                                                        .With(r => r.Title = TITLE)
+                                                        .Build();
+
+            GivenHistoryItem(downloadId, TITLE, _hdtv720p, EpisodeHistoryEventType.Grabbed, grabbedAt);
+            GivenLatestDownloadHistory(downloadId, grabbedAt, DownloadHistoryEventType.DownloadGrabbed);
+
+            Subject.IsSatisfiedByGrab(_remoteEpisode).Accepted.Should().BeFalse();
+        }
+
+        [Test]
+        public void should_accept_a_grab_older_than_the_max_active_grab_age()
+        {
+            var downloadId = Guid.NewGuid().ToString().ToUpper();
+            var grabbedAt = DateTime.UtcNow.AddDays(-8);
+
+            _remoteEpisode.Release = Builder<ReleaseInfo>.CreateNew()
+                                                        .With(r => r.Title = TITLE)
+                                                        .Build();
+
+            GivenHistoryItem(downloadId, TITLE, _hdtv720p, EpisodeHistoryEventType.Grabbed, grabbedAt);
+            GivenLatestDownloadHistory(downloadId, grabbedAt, DownloadHistoryEventType.DownloadGrabbed);
+
+            Subject.IsSatisfiedByGrab(_remoteEpisode).Accepted.Should().BeTrue();
         }
 
         [Test]

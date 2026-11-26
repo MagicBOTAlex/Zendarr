@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
@@ -347,6 +349,8 @@ namespace Sonarr.Api.V5.Queue
 
         private TrackedDownload? Remove(TrackedDownload trackedDownload, string? message, bool removeFromClient, bool blocklist, bool skipRedownload, bool changeCategory)
         {
+            var categoryChangeApplied = false;
+
             if (removeFromClient)
             {
                 var downloadClient = _downloadClientProvider.Get(trackedDownload.DownloadClient);
@@ -368,6 +372,7 @@ namespace Sonarr.Api.V5.Queue
                 }
 
                 downloadClient.MarkItemAsImported(trackedDownload.DownloadItem);
+                categoryChangeApplied = CategoryChangeApplied(downloadClient, trackedDownload);
             }
 
             if (blocklist)
@@ -383,10 +388,21 @@ namespace Sonarr.Api.V5.Queue
             }
             else if (changeCategory)
             {
-                // A category change re-files the item inside the client (MarkItemAsImported)
-                // instead of throwing it away, so record the terminal hand-off as an import,
-                // not as "ignored".
-                _downloadHistoryService.RecordCategoryChangedDownload(trackedDownload);
+                if (categoryChangeApplied)
+                {
+                    // The category change re-filed the item inside the client
+                    // (MarkItemAsImported) instead of throwing it away, so record the terminal
+                    // hand-off as an import, not as "ignored".
+                    _downloadHistoryService.RecordCategoryChangedDownload(trackedDownload);
+                }
+                else
+                {
+                    // The client accepted the request but the item is still in the category
+                    // Zendarr tracks (the post-import category is unset or equal to it), so
+                    // nothing was imported. Record "ignored" so RemoveCompletedDownloads cannot
+                    // later delete a download that was never imported.
+                    _downloadHistoryService.RecordCategoryChangeNotApplied(trackedDownload);
+                }
             }
 
             if (!removeFromClient && !blocklist && !changeCategory)
@@ -398,6 +414,39 @@ namespace Sonarr.Api.V5.Queue
             }
 
             return trackedDownload;
+        }
+
+        // A changeCategory removal only counts as an import when the client actually re-filed
+        // the item, not merely because the client accepted the request. MarkItemAsImported is a
+        // no-op when the configured post-import category is unset or equal to the category the
+        // item is already in, and clients that filter GetItems by their tracked categories stop
+        // returning an item once it has been moved. Re-read the client: an item that is gone has
+        // left the tracked categories, and an item that is still listed must report a different,
+        // non-empty category. Anything else (or a failed re-read) counts as "not moved", so the
+        // download is not recorded as imported and cannot later be deleted as a completed import.
+        private static bool CategoryChangeApplied(IDownloadClient downloadClient, TrackedDownload trackedDownload)
+        {
+            var downloadItem = trackedDownload.DownloadItem;
+            var previousCategory = downloadItem.Category;
+
+            try
+            {
+                var refreshedItem = downloadClient.GetItems()
+                                                  .FirstOrDefault(i => string.Equals(i.DownloadId, downloadItem.DownloadId, StringComparison.OrdinalIgnoreCase));
+
+                if (refreshedItem == null)
+                {
+                    return true;
+                }
+
+                return refreshedItem.Category.IsNotNullOrWhiteSpace() &&
+                       !string.Equals(refreshedItem.Category, previousCategory, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception)
+            {
+                // Could not verify the move: do not claim an import.
+                return false;
+            }
         }
 
         private TrackedDownload GetTrackedDownload(int queueId)

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using FizzWare.NBuilder;
@@ -126,6 +127,70 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             Mocker.GetMock<IQueueService>()
                 .Setup(s => s.GetQueue())
                 .Returns(queue.ToList());
+        }
+
+        private void GivenGrabbedHistory(string downloadId, string sourceTitle, DateTime grabbedAt)
+        {
+            Mocker.GetMock<IHistoryService>()
+                  .Setup(x => x.FindByEpisodeId(It.IsAny<int>()))
+                  .Returns(new List<EpisodeHistory>
+                           {
+                               new EpisodeHistory
+                               {
+                                   DownloadId = downloadId,
+                                   SourceTitle = sourceTitle,
+                                   Date = grabbedAt,
+                                   EventType = EpisodeHistoryEventType.Grabbed
+                               }
+                           });
+        }
+
+        private void GivenLatestDownloadHistory(string downloadId, DateTime date, DownloadHistoryEventType eventType)
+        {
+            Mocker.GetMock<IDownloadHistoryService>()
+                  .Setup(x => x.GetLatestDownloadHistoryItem(downloadId))
+                  .Returns(new DownloadHistory
+                           {
+                               DownloadId = downloadId,
+                               Date = date,
+                               EventType = eventType
+                           });
+        }
+
+        [Test]
+        public void should_return_false_for_a_recent_grab_without_a_terminal_event()
+        {
+            var downloadId = Guid.NewGuid().ToString().ToUpper();
+            var sourceTitle = "Series.Title.S01E01.720p.HDTV.x264-Sonarr";
+            var grabbedAt = DateTime.UtcNow.AddHours(-2);
+
+            _remoteEpisode.Release = Builder<ReleaseInfo>.CreateNew()
+                                                        .With(r => r.Title = sourceTitle)
+                                                        .Build();
+
+            GivenEmptyQueue();
+            GivenGrabbedHistory(downloadId, sourceTitle, grabbedAt);
+            GivenLatestDownloadHistory(downloadId, grabbedAt, DownloadHistoryEventType.DownloadGrabbed);
+
+            Subject.IsSatisfiedBy(_remoteEpisode, new()).Accepted.Should().BeFalse();
+        }
+
+        [Test]
+        public void should_return_true_for_a_grab_older_than_the_max_active_grab_age()
+        {
+            var downloadId = Guid.NewGuid().ToString().ToUpper();
+            var sourceTitle = "Series.Title.S01E01.720p.HDTV.x264-Sonarr";
+            var grabbedAt = DateTime.UtcNow.AddDays(-8);
+
+            _remoteEpisode.Release = Builder<ReleaseInfo>.CreateNew()
+                                                        .With(r => r.Title = sourceTitle)
+                                                        .Build();
+
+            GivenEmptyQueue();
+            GivenGrabbedHistory(downloadId, sourceTitle, grabbedAt);
+            GivenLatestDownloadHistory(downloadId, grabbedAt, DownloadHistoryEventType.DownloadGrabbed);
+
+            Subject.IsSatisfiedBy(_remoteEpisode, new()).Accepted.Should().BeTrue();
         }
 
         [Test]

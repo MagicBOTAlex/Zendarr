@@ -15,6 +15,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 {
     public class QueueSpecification : DownloadDecisionEngineSpecification
     {
+        // A grab is only plausibly in flight for a bounded time. Without a terminal event a
+        // very old grab would otherwise make its release permanently ungrabbable, e.g. the
+        // fileless episodes left behind by grabs whose terminal event was never recorded.
+        private static readonly TimeSpan MaxActiveGrabAge = TimeSpan.FromDays(7);
+
         private readonly IQueueService _queueService;
         private readonly UpgradableSpecification _upgradableSpecification;
         private readonly ICustomFormatCalculationService _formatService;
@@ -246,6 +251,13 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         private bool IsActiveGrab(string downloadId, DateTime grabbedAt, System.Collections.Generic.List<NzbDrone.Core.Queue.Queue> queue)
         {
+            // Stop treating a grab as in flight once it is older than any plausible download.
+            // An old grab with no terminal event must not block a re-grab forever.
+            if (DateTime.UtcNow - grabbedAt > MaxActiveGrabAge)
+            {
+                return false;
+            }
+
             // The projection may not yet have been refreshed after startup. History is
             // durable, but a failed-pending item must remain eligible for replacement.
             if (queue.Any(q => q.DownloadId == downloadId && q.TrackedDownloadState == TrackedDownloadState.FailedPending))

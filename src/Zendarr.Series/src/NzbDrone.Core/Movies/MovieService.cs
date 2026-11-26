@@ -309,14 +309,26 @@ namespace NzbDrone.Core.Movies
                 throw new NzbDroneClientException(HttpStatusCode.BadRequest, "'{0}' is not a valid status to restore a movie to", status);
             }
 
-            var storedMovie = GetMovie(movieId);
-            var storedStatus = storedMovie.MovieMetadata.Value.Status;
-            var movieMetadata = storedMovie.MovieMetadata.Value;
+            // Serialise the read-check-write against MovieMetadataRepository.UpsertMany,
+            // which every metadata writer (including collection and import-list
+            // refreshes that run outside RefreshMovieService's latch) funnels through.
+            // Without the shared lock such a writer could read the old Deleted status
+            // before this field update and write it back afterwards, silently reverting
+            // the restore.
+            Movie updatedMovie;
+            MovieStatusType storedStatus;
 
-            movieMetadata.Status = status;
-            _movieMetadataRepository.SetFields(movieMetadata, m => m.Status);
+            lock (MovieMetadataRepository.MetadataWriteLock)
+            {
+                var storedMovie = GetMovie(movieId);
+                storedStatus = storedMovie.MovieMetadata.Value.Status;
+                var movieMetadata = storedMovie.MovieMetadata.Value;
 
-            var updatedMovie = GetMovie(movieId);
+                movieMetadata.Status = status;
+                _movieMetadataRepository.SetFields(movieMetadata, m => m.Status);
+
+                updatedMovie = GetMovie(movieId);
+            }
 
             _logger.Info("Movie '{0}' status restored from {1} to {2}", updatedMovie.Title, storedStatus, updatedMovie.MovieMetadata.Value.Status);
             _eventAggregator.PublishEvent(new MovieUpdatedEvent(updatedMovie));

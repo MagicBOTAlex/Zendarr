@@ -22,9 +22,16 @@ namespace NzbDrone.Core.Download.History
         void RecordRemovedDownload(TrackedDownload trackedDownload, string message = "Removed from queue");
 
         // Terminal outcome for a download the user re-filed in the client by changing its
-        // category. That is a hand-off (normally to the client's "imported" category), not a
-        // rejection, so it is recorded as an import rather than as "ignored".
+        // category and the client actually applied that move. That is a hand-off (normally to
+        // the client's "imported" category), not a rejection, so it is recorded as an import
+        // rather than as "ignored".
         void RecordCategoryChangedDownload(TrackedDownload trackedDownload, string message = "Category changed");
+
+        // Terminal outcome for a changeCategory removal where the client did not actually move
+        // the item (its post-import category is unset or equal to the category it is already in).
+        // Nothing was imported, so this is recorded as "ignored": recording an import would let
+        // RemoveCompletedDownloads delete a download that was never imported.
+        void RecordCategoryChangeNotApplied(TrackedDownload trackedDownload, string message = "Category change not applied");
     }
 
     public class DownloadHistoryService : IDownloadHistoryService,
@@ -103,6 +110,14 @@ namespace NzbDrone.Core.Download.History
             // Zendarr's keeping rather than rejected. Recording "ignored" would claim the user
             // threw the download away; record the terminal import instead.
             RecordTerminalDownload(trackedDownload, DownloadHistoryEventType.DownloadImported, message);
+        }
+
+        public void RecordCategoryChangeNotApplied(TrackedDownload trackedDownload, string message = "Category change not applied")
+        {
+            // The client accepted the changeCategory request but the item is still in the
+            // category Zendarr tracks, so it was never imported (and is still owned by the
+            // client). Record "ignored" to release the durable guard without claiming an import.
+            RecordTerminalDownload(trackedDownload, DownloadHistoryEventType.DownloadIgnored, message);
         }
 
         private void RecordTerminalDownload(TrackedDownload trackedDownload, DownloadHistoryEventType eventType, string message)
