@@ -1,3 +1,4 @@
+import classNames from 'classnames';
 import React, {
   useCallback,
   useEffect,
@@ -6,26 +7,30 @@ import React, {
   useState,
 } from 'react';
 import { hideMessage, showMessage } from 'App/messagesStore';
-import Alert from 'Components/Alert';
-import FieldSet from 'Components/FieldSet';
+import Icon, { IconName } from 'Components/Icon';
 import SpinnerButton from 'Components/Link/SpinnerButton';
-import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
 import ProgressBar from 'Components/ProgressBar';
-import { kinds, sizes } from 'Helpers/Props';
+import { icons, kinds, sizes } from 'Helpers/Props';
 import { ERROR, INFO, SUCCESS, WARNING } from 'Helpers/Props/messageTypes';
 import {
   getDeviceLabel,
   useMediaCompressionCapabilities,
 } from 'Settings/Compression/useMediaCompressionCapabilities';
 import { useTranscodeProfiles } from 'Settings/Compression/useTranscodeProfiles';
+import formatBytes from 'Utilities/Number/formatBytes';
 import translate from 'Utilities/String/translate';
 import getToggledRange from 'Utilities/Table/getToggledRange';
 import { buildJobGroups, flattenJobGroups, JobSeriesGroup } from './jobGroups';
 import TranscodeHistoryRow from './TranscodeHistoryRow';
 import TranscodeJobRow from './TranscodeJobRow';
+import {
+  TRANSCODE_TONE_BG_CLASSES,
+  TRANSCODE_TONE_TEXT_CLASSES,
+  TranscodeTone,
+} from './transcodeStatus';
 import {
   useBulkResolveTranscodeJobs,
   useClearTranscodeHistory,
@@ -33,10 +38,6 @@ import {
   useTranscodeJobs,
 } from './useTranscodeJobs';
 
-const EMPTY_CLASS = 'text-[var(--helpTextColor)]';
-const GROUP_CLASS = 'mt-[10px] mb-[2px] text-[13px] font-semibold first:mt-0';
-const SEASON_CLASS =
-  'mt-[4px] mb-[2px] text-[12px] font-normal text-[var(--helpTextColor)]';
 const BULK_MESSAGE_ID = -1000;
 const REQUEUE_MESSAGE_ID = -1014;
 const CLEAR_HISTORY_MESSAGE_ID = -1015;
@@ -47,6 +48,161 @@ const BULK_DETAIL_MESSAGE_ID = -1016;
 // membership.
 const TERMINAL_STATUSES = ['Completed', 'Failed', 'Cancelled', 'Skipped'];
 
+interface StatCardProps {
+  icon: IconName;
+  tone: TranscodeTone;
+  value: React.ReactNode;
+  label: string;
+}
+
+function StatCard({ icon, tone, value, label }: StatCardProps) {
+  return (
+    <div className="flex min-w-0 items-center gap-[10px] rounded-[6px] border border-[var(--defaultBorderColor)] bg-[var(--cardBackgroundColor)] px-[12px] py-[10px] shadow-[0_1px_2px_var(--cardShadowColor)]">
+      <span
+        className={classNames(
+          'flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[6px]',
+          TRANSCODE_TONE_BG_CLASSES[tone],
+          TRANSCODE_TONE_TEXT_CLASSES[tone]
+        )}
+      >
+        <Icon name={icon} size={15} aria-hidden={true} />
+      </span>
+
+      <div className="min-w-0">
+        <div className="truncate text-[16px] font-semibold leading-none tabular-nums text-[var(--textColor)]">
+          {value}
+        </div>
+        <div className="mt-[4px] truncate text-[11px] leading-none text-[var(--helpTextColor)]">
+          {label}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface SectionCardProps {
+  icon: IconName;
+  title: string;
+  count: number;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}
+
+function SectionCard({
+  icon,
+  title,
+  count,
+  actions,
+  children,
+}: SectionCardProps) {
+  return (
+    <section className="overflow-hidden rounded-[6px] border border-[var(--defaultBorderColor)] bg-[var(--cardBackgroundColor)] shadow-[0_1px_2px_var(--cardShadowColor)]">
+      <div className="flex flex-wrap items-center justify-between gap-[8px] border-b border-[var(--defaultBorderColor)] bg-[var(--pageFooterBackground)] px-[14px] py-[8px]">
+        <div className="flex min-w-0 items-center gap-[7px]">
+          <Icon
+            name={icon}
+            size={13}
+            className="shrink-0 text-[var(--textColor)]"
+            aria-hidden={true}
+          />
+          <h2 className="truncate text-[13px] font-semibold text-[var(--textColor)]">
+            {title}
+          </h2>
+          <span className="rounded-full bg-[var(--cardBackgroundColor)] px-[7px] py-[1px] text-[11px] font-semibold tabular-nums text-[var(--helpTextColor)]">
+            {count}
+          </span>
+        </div>
+
+        {actions ? (
+          <div className="flex flex-wrap items-center gap-[6px]">{actions}</div>
+        ) : null}
+      </div>
+
+      {children}
+    </section>
+  );
+}
+
+function SubHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-center justify-between gap-[8px] border-b border-[var(--borderColor)] bg-[var(--cardBackgroundColor)] px-[16px] py-[5px]">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--helpTextColor)]">
+        {label}
+      </span>
+      <span className="text-[11px] tabular-nums text-[var(--helpTextColor)]">
+        {count}
+      </span>
+    </div>
+  );
+}
+
+function GroupHeader({
+  title,
+  count,
+  sticky = false,
+}: {
+  title: string;
+  count: number;
+  sticky?: boolean;
+}) {
+  return (
+    <div
+      className={classNames(
+        'flex items-center justify-between gap-[8px] border-b border-[var(--borderColor)] bg-[var(--tableRowHoverBackgroundColor)] px-[16px] py-[6px]',
+        sticky && 'sticky top-0 z-10'
+      )}
+    >
+      <h3 className="truncate text-[12px] font-semibold text-[var(--textColor)]">
+        {title}
+      </h3>
+      <span className="shrink-0 text-[11px] tabular-nums text-[var(--helpTextColor)]">
+        {count}
+      </span>
+    </div>
+  );
+}
+
+function SeasonHeader({ label }: { label: string }) {
+  return (
+    <div className="border-b border-[var(--borderColor)] bg-[var(--cardBackgroundColor)] px-[16px] py-[4px]">
+      <h4 className="truncate text-[11px] font-medium text-[var(--helpTextColor)]">
+        {label}
+      </h4>
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-[12px]" aria-hidden={true}>
+      <div className="animate-pulse rounded-[6px] border border-[var(--defaultBorderColor)] bg-[var(--cardBackgroundColor)] p-[16px]">
+        <div className="h-[13px] w-[120px] rounded bg-[var(--pageFooterBackground)]" />
+        <div className="mt-[14px] space-y-[8px]">
+          <div className="h-[42px] rounded bg-[var(--pageFooterBackground)]" />
+          <div className="h-[42px] rounded bg-[var(--pageFooterBackground)]" />
+          <div className="h-[42px] rounded bg-[var(--pageFooterBackground)]" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-[6px] border border-[var(--defaultBorderColor)] bg-[var(--cardBackgroundColor)] px-[24px] py-[64px] text-center shadow-[0_1px_2px_var(--cardShadowColor)]">
+      <span className="flex h-[44px] w-[44px] items-center justify-center rounded-full bg-[var(--pageFooterBackground)] text-[var(--textColor)]">
+        <Icon name={icons.MOVIE_FILE} size={20} aria-hidden={true} />
+      </span>
+      <h2 className="mt-[14px] text-[15px] font-semibold text-[var(--textColor)]">
+        {translate('CompressionNoJobs')}
+      </h2>
+      <p className="mt-[4px] max-w-[46ch] text-[12px] leading-[1.6] text-[var(--helpTextColor)]">
+        {translate('CompressionNoJobsDescription')}
+      </p>
+    </div>
+  );
+}
+
 function MediaCompressionPage() {
   const { isFetching, isFetched, error, jobs, refetch } = useTranscodeJobs();
   const { capabilities } = useMediaCompressionCapabilities();
@@ -55,8 +211,11 @@ function MediaCompressionPage() {
   const { clearHistory, isClearingHistory } = useClearTranscodeHistory();
   const { createJobs, isCreating } = useCreateTranscodeJobs();
 
-  const handleRetry = useCallback(() => {
-    refetch();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    Promise.resolve(refetch()).finally(() => setIsRefreshing(false));
   }, [refetch]);
 
   const active = useMemo(
@@ -171,6 +330,54 @@ function MediaCompressionPage() {
     : 0;
   const bulkProgress = bulk && bulk.total ? (bulkDone * 100) / bulk.total : 0;
 
+  const savedBytes = useMemo(
+    () =>
+      jobs.reduce((total, job) => {
+        if (job.status !== 'Completed' || !job.sourceSize || !job.outputSize) {
+          return total;
+        }
+
+        return total + Math.max(job.sourceSize - job.outputSize, 0);
+      }, 0),
+    [jobs]
+  );
+
+  const activeCount = active.length + transferring.length;
+  const reviewCount = review.length;
+  const failedCount = history.filter((job) => job.status === 'Failed').length;
+  const hasLive = activeCount > 0;
+  const hasReview = reviewCount > 0;
+  const hasHistory = history.length > 0;
+  const isInitialLoading = isFetching && !isFetched;
+  const showEmpty = !isInitialLoading && !error && isFetched && !jobs.length;
+
+  const stats: StatCardProps[] = [
+    {
+      icon: icons.ACTIONS,
+      tone: activeCount ? 'primary' : 'neutral',
+      value: activeCount,
+      label: translate('CompressionActive'),
+    },
+    {
+      icon: icons.VIEW,
+      tone: reviewCount ? 'warning' : 'neutral',
+      value: reviewCount,
+      label: translate('CompressionReview'),
+    },
+    {
+      icon: icons.DANGER,
+      tone: failedCount ? 'danger' : 'neutral',
+      value: failedCount,
+      label: translate('Failed'),
+    },
+    {
+      icon: icons.DRIVE,
+      tone: savedBytes ? 'success' : 'neutral',
+      value: formatBytes(savedBytes),
+      label: translate('TranscodeSpaceSaved'),
+    },
+  ];
+
   const getDeviceName = useCallback(
     (deviceId?: string) => (deviceId ? deviceNames[deviceId] : undefined),
     [deviceNames]
@@ -181,21 +388,108 @@ function MediaCompressionPage() {
     [profileNames]
   );
 
+  const handleSelect = useCallback(
+    (jobId: number, isSelected: boolean, shiftKey: boolean) => {
+      // Capture the anchor before scheduling the update. The updater below runs later (React
+      // invokes it while re-rendering), so reading `lastSelected.current` inside it would see the
+      // id we just clicked and collapse the shift range to a single row.
+      const anchor = lastSelected.current;
+      lastSelected.current = jobId;
+
+      setSelectedIds((current) => {
+        const next = new Set(current);
+
+        if (shiftKey && anchor != null) {
+          const { lower, upper } = getToggledRange(review, jobId, anchor);
+          const start = Math.max(0, lower);
+          const end = Math.min(upper, review.length);
+
+          for (let index = start; index < end; index++) {
+            if (isSelected) {
+              next.add(review[index].id);
+            } else {
+              next.delete(review[index].id);
+            }
+          }
+        }
+
+        if (isSelected) {
+          next.add(jobId);
+        } else {
+          next.delete(jobId);
+        }
+
+        return Array.from(next);
+      });
+    },
+    [review]
+  );
+
+  const handleSelectAll = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      lastSelected.current = null;
+      setSelectedIds(event.target.checked ? review.map((job) => job.id) : []);
+    },
+    [review]
+  );
+
   const renderJobGroups = useCallback(
+    (groups: JobSeriesGroup[], selectable = false) => (
+      <>
+        {groups.map((group) => (
+          <React.Fragment key={group.key}>
+            <GroupHeader
+              title={group.title}
+              count={group.seasons.reduce(
+                (total, season) => total + season.jobs.length,
+                0
+              )}
+            />
+
+            {group.seasons.map((season) => (
+              <React.Fragment key={season.key}>
+                {season.label ? <SeasonHeader label={season.label} /> : null}
+
+                {season.jobs.map((job) => (
+                  <TranscodeJobRow
+                    key={job.id}
+                    job={job}
+                    deviceName={getDeviceName(job.deviceId)}
+                    profileName={getProfileName(job.profileId)}
+                    isSelected={selectable ? selectedSet.has(job.id) : false}
+                    isBulkRunning={selectable ? !!bulk : false}
+                    onSelect={selectable ? handleSelect : undefined}
+                  />
+                ))}
+              </React.Fragment>
+            ))}
+          </React.Fragment>
+        ))}
+      </>
+    ),
+    [bulk, getDeviceName, getProfileName, handleSelect, selectedSet]
+  );
+
+  const renderHistoryGroups = useCallback(
     (groups: JobSeriesGroup[]) => (
       <>
         {groups.map((group) => (
           <React.Fragment key={group.key}>
-            <h3 className={GROUP_CLASS}>{group.title}</h3>
+            <GroupHeader
+              title={group.title}
+              count={group.seasons.reduce(
+                (total, season) => total + season.jobs.length,
+                0
+              )}
+              sticky={true}
+            />
 
             {group.seasons.map((season) => (
               <React.Fragment key={season.key}>
-                {season.label ? (
-                  <h4 className={SEASON_CLASS}>{season.label}</h4>
-                ) : null}
+                {season.label ? <SeasonHeader label={season.label} /> : null}
 
                 {season.jobs.map((job) => (
-                  <TranscodeJobRow
+                  <TranscodeHistoryRow
                     key={job.id}
                     job={job}
                     deviceName={getDeviceName(job.deviceId)}
@@ -249,51 +543,6 @@ function MediaCompressionPage() {
   useEffect(() => {
     return () => hideMessage({ id: BULK_MESSAGE_ID });
   }, []);
-
-  const handleSelect = useCallback(
-    (jobId: number, isSelected: boolean, shiftKey: boolean) => {
-      // Capture the anchor before scheduling the update. The updater below runs later (React
-      // invokes it while re-rendering), so reading `lastSelected.current` inside it would see the
-      // id we just clicked and collapse the shift range to a single row.
-      const anchor = lastSelected.current;
-      lastSelected.current = jobId;
-
-      setSelectedIds((current) => {
-        const next = new Set(current);
-
-        if (shiftKey && anchor != null) {
-          const { lower, upper } = getToggledRange(review, jobId, anchor);
-          const start = Math.max(0, lower);
-          const end = Math.min(upper, review.length);
-
-          for (let index = start; index < end; index++) {
-            if (isSelected) {
-              next.add(review[index].id);
-            } else {
-              next.delete(review[index].id);
-            }
-          }
-        }
-
-        if (isSelected) {
-          next.add(jobId);
-        } else {
-          next.delete(jobId);
-        }
-
-        return Array.from(next);
-      });
-    },
-    [review]
-  );
-
-  const handleSelectAll = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      lastSelected.current = null;
-      setSelectedIds(event.target.checked ? review.map((job) => job.id) : []);
-    },
-    [review]
-  );
 
   const startBulkResolve = useCallback(
     (action: string) => {
@@ -370,7 +619,7 @@ function MediaCompressionPage() {
         }
       );
     },
-    [selectedIds, bulkResolveJobs]
+    [bulkResolveJobs, selectedIds]
   );
 
   const handleOverwriteSelected = useCallback(() => {
@@ -485,234 +734,259 @@ function MediaCompressionPage() {
         },
       }
     );
-  }, [createJobs, requeueJobIds, requeueCount]);
+  }, [createJobs, requeueCount, requeueJobIds]);
+
+  const bulkProgressLabel = bulk
+    ? translate('BulkResolveProgress', {
+        done: Math.min(bulkDone, bulk.total),
+        total: bulk.total,
+      })
+    : '';
 
   return (
     <PageContent title={translate('Transcoding')}>
-      <PageContentBody>
-        {isFetching && !isFetched ? <LoadingIndicator /> : null}
+      <header className="border-b border-[var(--defaultBorderColor)] px-[20px] pb-[14px] pt-[16px] max-[768px]:px-[10px]">
+        <div className="flex flex-wrap items-start justify-between gap-[12px]">
+          <div className="flex min-w-0 items-center gap-[10px]">
+            <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[6px] bg-[color-mix(in_srgb,var(--themeBlue)_16%,transparent)] text-[light-dark(var(--alertInfoColor),var(--themeBlue))]">
+              <Icon name={icons.ACTIONS} size={18} aria-hidden={true} />
+            </span>
 
-        {error ? (
-          <Alert kind={kinds.DANGER}>
-            <div className="flex items-center gap-[10px]">
-              <span>{translate('CompressionJobsLoadError')}</span>
+            <div className="min-w-0">
+              <h1 className="truncate text-[20px] font-semibold leading-tight text-[var(--textColor)]">
+                {translate('Transcoding')}
+              </h1>
+              <p className="mt-[2px] truncate text-[12px] text-[var(--helpTextColor)]">
+                {translate('TranscodingDescription')}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-[6px]">
+            <SpinnerButton
+              size={sizes.SMALL}
+              isSpinning={isRefreshing}
+              onPress={handleRefresh}
+            >
+              {translate('Refresh')}
+            </SpinnerButton>
+          </div>
+        </div>
+
+        <div className="mt-[12px] grid grid-cols-2 gap-[8px] min-[900px]:grid-cols-4">
+          {stats.map((stat) => (
+            <StatCard key={stat.label} {...stat} />
+          ))}
+        </div>
+      </header>
+
+      <PageContentBody innerClassName="p-[20px] max-[768px]:p-[10px]">
+        <div className="flex flex-col gap-[12px]">
+          {isInitialLoading ? <LoadingSkeleton /> : null}
+
+          {error ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-start gap-[12px] rounded-[6px] border border-[var(--alertDangerBorderColor)] bg-[var(--alertDangerBackgroundColor)] px-[14px] py-[12px]"
+            >
+              <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--dangerColor)_16%,transparent)] text-[light-dark(var(--alertDangerColor),var(--dangerColor))]">
+                <Icon name={icons.DANGER} size={15} aria-hidden={true} />
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-semibold text-[var(--textColor)]">
+                  {translate('CompressionJobsLoadError')}
+                </div>
+                <div className="mt-[2px] text-[12px] leading-[1.5] text-[var(--helpTextColor)]">
+                  {translate('TranscodeLoadErrorHint')}
+                </div>
+              </div>
 
               <SpinnerButton
                 size={sizes.SMALL}
-                isSpinning={isFetching}
-                onPress={handleRetry}
+                isSpinning={isRefreshing}
+                onPress={handleRefresh}
               >
                 {translate('TranscodeJobsRetry')}
               </SpinnerButton>
             </div>
-          </Alert>
-        ) : null}
+          ) : null}
 
-        {isFetched && (!error || jobs.length > 0) ? (
-          <>
-            <FieldSet legend={translate('CompressionActive')}>
-              {active.length ? (
-                renderJobGroups(activeGroups)
-              ) : (
-                <div className={EMPTY_CLASS}>
-                  {translate('CompressionNoActiveJobs')}
-                </div>
-              )}
-            </FieldSet>
+          {showEmpty ? <EmptyState /> : null}
 
-            <FieldSet legend={translate('Transferring')}>
-              {transferring.length ? (
-                renderJobGroups(transferringGroups)
-              ) : (
-                <div className={EMPTY_CLASS}>
-                  {translate('CompressionNoTransferringJobs')}
-                </div>
-              )}
-            </FieldSet>
+          {!isInitialLoading && jobs.length > 0 ? (
+            <>
+              {hasLive ? (
+                <SectionCard
+                  icon={icons.ACTIONS}
+                  title={translate('CompressionLive')}
+                  count={activeCount}
+                >
+                  {active.length ? (
+                    <>
+                      <SubHeader
+                        label={translate('CompressionEncoding')}
+                        count={active.length}
+                      />
+                      {renderJobGroups(activeGroups)}
+                    </>
+                  ) : null}
 
-            <FieldSet legend={translate('CompressionReview')}>
-              {review.length ? (
-                <>
-                  <div className="mb-[10px] flex flex-wrap items-center gap-[10px]">
-                    <label className="flex items-center gap-[5px]">
+                  {transferring.length ? (
+                    <>
+                      <SubHeader
+                        label={translate('Transferring')}
+                        count={transferring.length}
+                      />
+                      {renderJobGroups(transferringGroups)}
+                    </>
+                  ) : null}
+                </SectionCard>
+              ) : null}
+
+              {hasReview ? (
+                <SectionCard
+                  icon={icons.VIEW}
+                  title={translate('CompressionReview')}
+                  count={reviewCount}
+                >
+                  <div className="flex flex-wrap items-center gap-x-[12px] gap-y-[8px] border-b border-[var(--borderColor)] bg-[color-mix(in_srgb,var(--warningColor)_10%,transparent)] px-[14px] py-[9px]">
+                    <label className="flex items-center gap-[6px] text-[12px] font-medium text-[var(--textColor)]">
                       <input
                         ref={selectAllRef}
                         type="checkbox"
                         checked={allSelected}
                         onChange={handleSelectAll}
                       />
-
                       {translate('SelectAll')}
                     </label>
 
-                    <SpinnerButton
-                      kind={kinds.PRIMARY}
-                      isSpinning={!!bulk}
-                      isDisabled={!selectedIds.length}
-                      onPress={handleOverwriteSelected}
-                    >
-                      {translate('OverwriteSelected')}
-                    </SpinnerButton>
+                    <span className="text-[12px] text-[var(--helpTextColor)]">
+                      {selectedIds.length
+                        ? translate('CountSelectedFiles', {
+                            selectedCount: selectedIds.length,
+                          })
+                        : translate('CompressionReviewHint')}
+                    </span>
 
-                    <SpinnerButton
-                      isSpinning={!!bulk}
-                      isDisabled={!selectedIds.length}
-                      onPress={handleKeepBothSelected}
-                    >
-                      {translate('KeepBothSelected')}
-                    </SpinnerButton>
+                    <div className="ml-auto flex flex-wrap items-center gap-[6px]">
+                      <SpinnerButton
+                        size={sizes.SMALL}
+                        kind={kinds.PRIMARY}
+                        isSpinning={!!bulk}
+                        isDisabled={!selectedIds.length}
+                        onPress={handleOverwriteSelected}
+                      >
+                        {translate('OverwriteSelected')}
+                      </SpinnerButton>
 
-                    <SpinnerButton
-                      kind={kinds.DANGER}
-                      isSpinning={!!bulk}
-                      isDisabled={!selectedIds.length}
-                      onPress={handleDiscardSelected}
-                    >
-                      {translate('DiscardSelected')}
-                    </SpinnerButton>
+                      <SpinnerButton
+                        size={sizes.SMALL}
+                        isSpinning={!!bulk}
+                        isDisabled={!selectedIds.length}
+                        onPress={handleKeepBothSelected}
+                      >
+                        {translate('KeepBothSelected')}
+                      </SpinnerButton>
+
+                      <SpinnerButton
+                        size={sizes.SMALL}
+                        kind={kinds.DANGER}
+                        isSpinning={!!bulk}
+                        isDisabled={!selectedIds.length}
+                        onPress={handleDiscardSelected}
+                      >
+                        {translate('DiscardSelected')}
+                      </SpinnerButton>
+                    </div>
                   </div>
 
                   {bulk ? (
-                    <div className="mb-[10px]">
-                      <div className={`mb-[5px] ${EMPTY_CLASS}`}>
-                        {translate('BulkResolveProgress', {
-                          done: Math.min(bulkDone, bulk.total),
-                          total: bulk.total,
-                        })}
+                    <div className="border-b border-[var(--borderColor)] px-[14px] py-[10px]">
+                      <div className="mb-[6px] flex items-center justify-between gap-[8px] text-[12px] text-[var(--helpTextColor)]">
+                        <span>{bulkProgressLabel}</span>
+                        <span className="tabular-nums">
+                          {Math.round(bulkProgress)}%
+                        </span>
                       </div>
-
                       <ProgressBar
-                        ariaLabel={translate('BulkResolveProgress', {
-                          done: Math.min(bulkDone, bulk.total),
-                          total: bulk.total,
-                        })}
+                        ariaLabel={bulkProgressLabel}
                         progress={bulkProgress}
-                        showText={true}
+                        showText={false}
+                        size={sizes.SMALL}
                       />
                     </div>
                   ) : null}
 
-                  {reviewGroups.map((group) => (
-                    <React.Fragment key={group.key}>
-                      <h3 className={GROUP_CLASS}>{group.title}</h3>
+                  {renderJobGroups(reviewGroups, true)}
+                </SectionCard>
+              ) : null}
 
-                      {group.seasons.map((season) => (
-                        <React.Fragment key={season.key}>
-                          {season.label ? (
-                            <h4 className={SEASON_CLASS}>{season.label}</h4>
-                          ) : null}
+              {hasHistory ? (
+                <SectionCard
+                  icon={icons.HISTORY}
+                  title={translate('History')}
+                  count={history.length}
+                  actions={
+                    <>
+                      {requeueCount ? (
+                        <SpinnerButton
+                          size={sizes.SMALL}
+                          isSpinning={isCreating}
+                          isDisabled={isCreating}
+                          onPress={handleRequeueFailed}
+                        >
+                          {translate('RequeueAllFailed')}
+                        </SpinnerButton>
+                      ) : null}
 
-                          {season.jobs.map((job) => (
-                            <TranscodeJobRow
-                              key={job.id}
-                              job={job}
-                              deviceName={getDeviceName(job.deviceId)}
-                              profileName={getProfileName(job.profileId)}
-                              isSelected={selectedSet.has(job.id)}
-                              isBulkRunning={!!bulk}
-                              onSelect={handleSelect}
-                            />
-                          ))}
-                        </React.Fragment>
-                      ))}
-                    </React.Fragment>
-                  ))}
-                </>
-              ) : (
-                <div className={EMPTY_CLASS}>
-                  {translate('CompressionNoReviewJobs')}
-                </div>
-              )}
-            </FieldSet>
-
-            <FieldSet legend={translate('History')}>
-              {history.length ? (
-                <>
-                  <div className="mb-[10px] flex justify-end gap-[10px]">
-                    <SpinnerButton
-                      size={sizes.SMALL}
-                      isSpinning={isCreating}
-                      isDisabled={!requeueCount || isCreating}
-                      onPress={handleRequeueFailed}
-                    >
-                      {translate('RequeueAllFailed')}
-                    </SpinnerButton>
-
-                    <SpinnerButton
-                      size={sizes.SMALL}
-                      kind={kinds.DANGER}
-                      isSpinning={isClearingHistory}
-                      onPress={handleClearHistoryPress}
-                    >
-                      {translate('ClearHistory')}
-                    </SpinnerButton>
+                      <SpinnerButton
+                        size={sizes.SMALL}
+                        kind={kinds.DANGER}
+                        isSpinning={isClearingHistory}
+                        onPress={handleClearHistoryPress}
+                      >
+                        {translate('ClearHistory')}
+                      </SpinnerButton>
+                    </>
+                  }
+                >
+                  <div className="max-h-[420px] overflow-y-auto">
+                    {renderHistoryGroups(historyGroups)}
                   </div>
-
-                  <div className="max-h-[420px] overflow-y-auto rounded-[4px] border border-[var(--borderColor)]">
-                    {historyGroups.map((group) => (
-                      <React.Fragment key={group.key}>
-                        <h3 className={`${GROUP_CLASS} px-[6px]`}>
-                          {group.title}
-                        </h3>
-
-                        {group.seasons.map((season) => (
-                          <React.Fragment key={season.key}>
-                            {season.label ? (
-                              <h4 className={`${SEASON_CLASS} px-[6px]`}>
-                                {season.label}
-                              </h4>
-                            ) : null}
-
-                            {season.jobs.map((job) => (
-                              <TranscodeHistoryRow
-                                key={job.id}
-                                job={job}
-                                deviceName={getDeviceName(job.deviceId)}
-                                profileName={getProfileName(job.profileId)}
-                              />
-                            ))}
-                          </React.Fragment>
-                        ))}
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div className={EMPTY_CLASS}>
-                  {translate('CompressionNoHistory')}
-                </div>
-              )}
-            </FieldSet>
-
-            <ConfirmModal
-              isOpen={isClearHistoryModalOpen}
-              kind={kinds.DANGER}
-              title={translate('ClearHistory')}
-              message={translate('ClearHistoryConfirm', {
-                count: history.length,
-              })}
-              confirmLabel={translate('ClearHistory')}
-              isSpinning={isClearingHistory}
-              onConfirm={handleClearHistoryConfirmed}
-              onCancel={handleClearHistoryModalClose}
-            />
-
-            <ConfirmModal
-              isOpen={pendingBulkAction !== null}
-              kind={kinds.DANGER}
-              title={translate('CompressionReview')}
-              message={bulkConfirmMessage}
-              confirmLabel={
-                pendingBulkAction === 'Discard'
-                  ? translate('Discard')
-                  : translate('OverwriteOriginal')
-              }
-              onConfirm={handleBulkResolveConfirmed}
-              onCancel={handleBulkResolveCancelled}
-            />
-          </>
-        ) : null}
+                </SectionCard>
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </PageContentBody>
+
+      <ConfirmModal
+        isOpen={isClearHistoryModalOpen}
+        kind={kinds.DANGER}
+        title={translate('ClearHistory')}
+        message={translate('ClearHistoryConfirm', {
+          count: history.length,
+        })}
+        confirmLabel={translate('ClearHistory')}
+        isSpinning={isClearingHistory}
+        onConfirm={handleClearHistoryConfirmed}
+        onCancel={handleClearHistoryModalClose}
+      />
+
+      <ConfirmModal
+        isOpen={pendingBulkAction !== null}
+        kind={kinds.DANGER}
+        title={translate('CompressionReview')}
+        message={bulkConfirmMessage}
+        confirmLabel={
+          pendingBulkAction === 'Discard'
+            ? translate('Discard')
+            : translate('OverwriteOriginal')
+        }
+        onConfirm={handleBulkResolveConfirmed}
+        onCancel={handleBulkResolveCancelled}
+      />
     </PageContent>
   );
 }
