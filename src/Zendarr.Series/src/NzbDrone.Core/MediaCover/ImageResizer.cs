@@ -1,9 +1,8 @@
+using System;
+using System.IO;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
-using SixLabors.ImageSharp.Memory;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace NzbDrone.Core.MediaCover
 {
@@ -14,6 +13,8 @@ namespace NzbDrone.Core.MediaCover
 
     public class ImageResizer : IImageResizer
     {
+        private const int JpegQuality = 92;
+
         private readonly IDiskProvider _diskProvider;
         private readonly bool _enabled;
 
@@ -22,15 +23,6 @@ namespace NzbDrone.Core.MediaCover
             _diskProvider = diskProvider;
 
             _enabled = true;
-
-            // More conservative memory allocation
-            SixLabors.ImageSharp.Configuration.Default.MemoryAllocator = new SimpleGcMemoryAllocator();
-
-            // Thumbnails don't need super high quality
-            SixLabors.ImageSharp.Configuration.Default.ImageFormatsManager.SetEncoder(JpegFormat.Instance, new JpegEncoder
-            {
-                Quality = 92
-            });
         }
 
         public void Resize(string source, string destination, int height)
@@ -42,9 +34,28 @@ namespace NzbDrone.Core.MediaCover
 
             try
             {
-                using var image = Image.Load(source);
-                image.Mutate(x => x.Resize(0, height));
-                image.Save(destination);
+                using var original = SKBitmap.Decode(source);
+
+                if (original == null)
+                {
+                    throw new InvalidOperationException($"Unable to decode image '{source}'");
+                }
+
+                var width = (int)Math.Round((double)original.Width * height / original.Height);
+                var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+
+                using var resized = original.Resize(info, new SKSamplingOptions(SKCubicResampler.Mitchell));
+
+                if (resized == null)
+                {
+                    throw new InvalidOperationException($"Unable to resize image '{source}'");
+                }
+
+                using var image = SKImage.FromBitmap(resized);
+                using var data = image.Encode(SKEncodedImageFormat.Jpeg, JpegQuality);
+
+                using var output = File.Create(destination);
+                data.SaveTo(output);
             }
             catch
             {
