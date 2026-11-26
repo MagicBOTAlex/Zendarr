@@ -9,7 +9,19 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         public int DownloadClient { get; set; }
         public DownloadClientItem DownloadItem { get; set; }
         public DownloadClientItem ImportItem { get; set; }
-        public TrackedDownloadState State { get; set; }
+        private TrackedDownloadState _state;
+
+        public TrackedDownloadState State
+        {
+            get => _state;
+            set
+            {
+                if (!TransitionTo(value))
+                {
+                    throw new InvalidOperationException($"Cannot transition tracked download from {_state} to {value}");
+                }
+            }
+        }
         public TrackedDownloadStatus Status { get; private set; }
         public RemoteEpisode RemoteEpisode { get; set; }
         public RemoteMovie RemoteMovie { get; set; }
@@ -32,6 +44,37 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         public TrackedDownload()
         {
             StatusMessages = Array.Empty<TrackedDownloadStatusMessage>();
+        }
+
+        // Terminal downloads are replaced with a new tracked object on a subsequent grab.
+        // Other transitions include retry, manual import, and restoration from history.
+        public bool CanTransitionTo(TrackedDownloadState state)
+        {
+            return Enum.IsDefined(typeof(TrackedDownloadState), state) &&
+                   (_state == state || !IsTerminal(_state));
+        }
+
+        public bool TransitionTo(TrackedDownloadState state)
+        {
+            if (!CanTransitionTo(state))
+            {
+                return false;
+            }
+
+            _state = state;
+
+            if (IsTerminal(state))
+            {
+                Status = TrackedDownloadStatus.Ok;
+                StatusMessages = Array.Empty<TrackedDownloadStatusMessage>();
+            }
+
+            return true;
+        }
+
+        private static bool IsTerminal(TrackedDownloadState state)
+        {
+            return state is TrackedDownloadState.Imported or TrackedDownloadState.Failed or TrackedDownloadState.Ignored;
         }
 
         // The media subject is single-valued: a download is either a series download or a movie
@@ -65,12 +108,22 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
         public void Warn(params TrackedDownloadStatusMessage[] statusMessages)
         {
+            if (IsTerminal(State))
+            {
+                return;
+            }
+
             Status = TrackedDownloadStatus.Warning;
             StatusMessages = statusMessages;
         }
 
         public void Fail()
         {
+            if (!CanTransitionTo(TrackedDownloadState.FailedPending))
+            {
+                return;
+            }
+
             Status = TrackedDownloadStatus.Error;
             State = TrackedDownloadState.FailedPending;
 

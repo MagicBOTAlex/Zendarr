@@ -64,7 +64,7 @@ namespace NzbDrone.Core.Download
 
             if (grabbedHistory.Any())
             {
-                PublishDownloadFailedEvent(grabbedHistory.First(), GetEpisodeIds(grabbedHistory), message, source);
+                PublishDownloadFailedEvent(grabbedHistory.First(), GetEpisodeIds(grabbedHistory), message, source, skipRedownload: skipRedownload);
                 return;
             }
 
@@ -194,8 +194,8 @@ namespace NzbDrone.Core.Download
                     movieFailure = trackedDownload.DownloadItem.Message;
                 }
 
-                trackedDownload.State = TrackedDownloadState.Failed;
                 PublishMovieDownloadFailedEvent(grabbedMovieItems.First(), movieFailure, trackedDownload);
+                trackedDownload.State = TrackedDownloadState.Failed;
 
                 return;
             }
@@ -218,8 +218,8 @@ namespace NzbDrone.Core.Download
                 failure = trackedDownload.DownloadItem.Message;
             }
 
-            trackedDownload.State = TrackedDownloadState.Failed;
             PublishDownloadFailedEvent(grabbedItems.First(), GetEpisodeIds(grabbedItems), failure, $"{BuildInfo.AppName} Failed Download Handling", trackedDownload);
+            trackedDownload.State = TrackedDownloadState.Failed;
         }
 
         private void PublishDownloadFailedEvent(EpisodeHistory historyItem, List<int> episodeIds, string message, string source, TrackedDownload trackedDownload = null, bool skipRedownload = false)

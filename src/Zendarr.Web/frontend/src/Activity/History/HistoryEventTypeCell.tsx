@@ -10,21 +10,33 @@ import {
 } from 'typings/History';
 import translate from 'Utilities/String/translate';
 
-export function getIconName(eventType: HistoryEventType, data: HistoryData) {
+export type DisplayHistoryEventType =
+  | HistoryEventType
+  | 'movieFileDeleted'
+  | 'movieFileRenamed'
+  | 'movieFolderImported';
+
+export function getIconName(
+  eventType: DisplayHistoryEventType,
+  data: HistoryData
+) {
   switch (eventType) {
     case 'grabbed':
       return icons.DOWNLOADING;
     case 'seriesFolderImported':
+    case 'movieFolderImported':
       return icons.DRIVE;
     case 'downloadFolderImported':
       return icons.DOWNLOADED;
     case 'downloadFailed':
       return icons.DOWNLOADING;
     case 'episodeFileDeleted':
+    case 'movieFileDeleted':
       return (data as EpisodeFileDeletedHistory).reason === 'MissingFromDisk'
         ? icons.FILE_MISSING
         : icons.DELETE;
     case 'episodeFileRenamed':
+    case 'movieFileRenamed':
       return icons.ORGANIZE;
     case 'downloadIgnored':
       return icons.IGNORE;
@@ -33,7 +45,7 @@ export function getIconName(eventType: HistoryEventType, data: HistoryData) {
   }
 }
 
-export function getIconKind(eventType: HistoryEventType) {
+export function getIconKind(eventType: DisplayHistoryEventType) {
   switch (eventType) {
     case 'downloadFailed':
       return kinds.DANGER;
@@ -42,7 +54,10 @@ export function getIconKind(eventType: HistoryEventType) {
   }
 }
 
-export function getTooltip(eventType: HistoryEventType, data: HistoryData) {
+export function getTooltip(
+  eventType: DisplayHistoryEventType,
+  data: HistoryData
+) {
   switch (eventType) {
     case 'grabbed':
       return translate('EpisodeGrabbedTooltip', {
@@ -51,6 +66,8 @@ export function getTooltip(eventType: HistoryEventType, data: HistoryData) {
       });
     case 'seriesFolderImported':
       return translate('SeriesFolderImportedTooltip');
+    case 'movieFolderImported':
+      return translate('Imported');
     case 'downloadFolderImported':
       return translate('EpisodeImportedTooltip');
     case 'downloadFailed':
@@ -59,8 +76,12 @@ export function getTooltip(eventType: HistoryEventType, data: HistoryData) {
       return (data as EpisodeFileDeletedHistory).reason === 'MissingFromDisk'
         ? translate('EpisodeFileMissingTooltip')
         : translate('EpisodeFileDeletedTooltip');
+    case 'movieFileDeleted':
+      return translate('FileDeleted');
     case 'episodeFileRenamed':
       return translate('EpisodeFileRenamedTooltip');
+    case 'movieFileRenamed':
+      return translate('Rename');
     case 'downloadIgnored':
       return translate('DownloadIgnoredEpisodeTooltip');
     default:
@@ -69,7 +90,7 @@ export function getTooltip(eventType: HistoryEventType, data: HistoryData) {
 }
 
 interface HistoryEventTypeCellProps {
-  eventType: HistoryEventType;
+  eventType: DisplayHistoryEventType;
   data: HistoryData;
 }
 

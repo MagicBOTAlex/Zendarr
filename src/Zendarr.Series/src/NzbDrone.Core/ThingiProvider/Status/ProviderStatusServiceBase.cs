@@ -68,12 +68,13 @@ namespace NzbDrone.Core.ThingiProvider.Status
             {
                 var status = GetProviderStatus(providerId);
 
-                if (status.EscalationLevel == 0)
+                if (status.EscalationLevel == 0 && !status.InitialFailure.HasValue && !status.DisabledTill.HasValue)
                 {
                     return;
                 }
 
-                status.EscalationLevel--;
+                status.EscalationLevel = Math.Max(0, status.EscalationLevel - 1);
+                status.InitialFailure = null;
                 status.DisabledTill = null;
 
                 _providerStatusRepository.Upsert(status);
@@ -103,6 +104,7 @@ namespace NzbDrone.Core.ThingiProvider.Status
                     escalate = false;
                 }
 
+                status.InitialFailure ??= now;
                 var inStartupGracePeriod = (_runtimeInfo.StartTime + MinimumTimeSinceStartup) > now;
                 var inGracePeriod = (status.InitialFailure.Value + MinimumTimeSinceInitialFailure) > now;
 
@@ -111,20 +113,20 @@ namespace NzbDrone.Core.ThingiProvider.Status
                     status.EscalationLevel = Math.Min(MaximumEscalationLevel, status.EscalationLevel + 1);
                 }
 
-                if (minimumBackOff != TimeSpan.Zero)
+                if (!inGracePeriod || minimumBackOff > TimeSpan.Zero)
                 {
-                    while (status.EscalationLevel < MaximumEscalationLevel && CalculateBackOffPeriod(status) < minimumBackOff)
+                    // A server-requested delay applies to this failure only; it must not
+                    // promote the persistent escalation level to match Retry-After.
+                    var backOff = CalculateBackOffPeriod(status);
+                    if (minimumBackOff > backOff)
                     {
-                        status.EscalationLevel++;
+                        backOff = minimumBackOff;
                     }
+
+                    status.DisabledTill = backOff > DateTime.MaxValue - now ? DateTime.MaxValue : now + backOff;
                 }
 
-                if (!inGracePeriod || minimumBackOff != TimeSpan.Zero)
-                {
-                    status.DisabledTill = now + CalculateBackOffPeriod(status);
-                }
-
-                if (inStartupGracePeriod && minimumBackOff == TimeSpan.Zero && status.DisabledTill.HasValue)
+                if (inStartupGracePeriod && minimumBackOff <= TimeSpan.Zero && status.DisabledTill.HasValue)
                 {
                     var maximumDisabledTill = now + TimeSpan.FromSeconds(EscalationBackOff.Periods[2]);
                     if (maximumDisabledTill < status.DisabledTill)

@@ -1,8 +1,10 @@
 using System.Collections.Generic;
 using System.Linq;
+using Dapper;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.AutoTagging;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Tv.Events;
@@ -30,6 +32,8 @@ namespace NzbDrone.Core.Tv
         List<Series> AllForTag(int tagId);
         Dictionary<int, int> GetAllSeriesQualityProfiles();
         Series UpdateSeries(Series series, bool updateEpisodesToMatchSeason = true, bool publishUpdatedEvent = true);
+        Series UpdateSeriesMetadata(Series series);
+        Series UpdateSeriesStatus(int seriesId, SeriesStatusType status);
         List<Series> UpdateSeries(List<Series> series, bool useExistingRelativeFolder);
         bool SeriesPathExists(string folder);
         void RemoveAddOptions(Series series);
@@ -40,6 +44,7 @@ namespace NzbDrone.Core.Tv
     public class SeriesService : ISeriesService
     {
         private readonly ISeriesRepository _seriesRepository;
+        private readonly IMainDatabase _database;
         private readonly IEventAggregator _eventAggregator;
         private readonly IEpisodeService _episodeService;
         private readonly IBuildSeriesPaths _seriesPathBuilder;
@@ -47,6 +52,7 @@ namespace NzbDrone.Core.Tv
         private readonly Logger _logger;
 
         public SeriesService(ISeriesRepository seriesRepository,
+                             IMainDatabase database,
                              IEventAggregator eventAggregator,
                              IEpisodeService episodeService,
                              IBuildSeriesPaths seriesPathBuilder,
@@ -54,6 +60,7 @@ namespace NzbDrone.Core.Tv
                              Logger logger)
         {
             _seriesRepository = seriesRepository;
+            _database = database;
             _eventAggregator = eventAggregator;
             _episodeService = episodeService;
             _seriesPathBuilder = seriesPathBuilder;
@@ -225,7 +232,10 @@ namespace NzbDrone.Core.Tv
             series.AddOptions = storedSeries.AddOptions;
             UpdateAutoTaggingTags(series);
 
-            var updatedSeries = _seriesRepository.Update(series);
+            _seriesRepository.SetFields(series, s => s.TvdbId, s => s.Seasons, s => s.Path, s => s.QualityProfileId,
+                s => s.SeasonFolder, s => s.Monitored, s => s.MonitorNewItems, s => s.SeriesType,
+                s => s.RootFolderPath, s => s.Tags, s => s.UseSceneNumbering);
+            var updatedSeries = GetSeries(series.Id);
             if (publishUpdatedEvent)
             {
                 _eventAggregator.PublishEvent(new SeriesEditedEvent(updatedSeries, storedSeries, episodeMonitoredChanged));
@@ -256,11 +266,40 @@ namespace NzbDrone.Core.Tv
                 UpdateAutoTaggingTags(s);
             }
 
-            _seriesRepository.UpdateMany(series);
+            _seriesRepository.SetFields(series, s => s.Seasons, s => s.Path, s => s.QualityProfileId,
+                s => s.SeasonFolder, s => s.Monitored, s => s.MonitorNewItems, s => s.SeriesType,
+                s => s.RootFolderPath, s => s.Tags, s => s.UseSceneNumbering);
             _logger.Debug("{0} series updated", series.Count);
             _eventAggregator.PublishEvent(new SeriesBulkEditedEvent(series));
 
             return series;
+        }
+
+        public Series UpdateSeriesMetadata(Series series)
+        {
+            // Metadata refreshes must not overwrite settings or a concurrently marked status.
+            _seriesRepository.SetFields(series, s => s.TvdbId, s => s.Title, s => s.Year,
+                s => s.TitleSlug, s => s.TvRageId, s => s.TvMazeId, s => s.TmdbId,
+                s => s.ImdbId, s => s.MalIds, s => s.AniListIds, s => s.AirTime,
+                s => s.Overview, s => s.OriginalLanguage, s => s.CleanTitle, s => s.SortTitle,
+                s => s.LastInfoSync, s => s.Runtime, s => s.Images, s => s.Network,
+                s => s.FirstAired, s => s.LastAired, s => s.Ratings, s => s.Actors,
+                s => s.Genres, s => s.Certification, s => s.OriginalCountry, s => s.Seasons);
+
+            return UpdateSeriesStatus(series.Id, series.Status);
+        }
+
+        public Series UpdateSeriesStatus(int seriesId, SeriesStatusType status)
+        {
+            // A 404 may supersede Ended, but neither terminal state may be resurrected.
+            // The predicate is evaluated by the database, not against a stale in-memory row.
+            using (var connection = _database.OpenConnection())
+            {
+                connection.Execute("UPDATE \"Series\" SET \"Status\" = @Status WHERE \"Id\" = @Id AND \"Status\" != @Deleted AND (\"Status\" != @Ended OR @Status = @Deleted)",
+                    new { Id = seriesId, Status = (int)status, Deleted = (int)SeriesStatusType.Deleted, Ended = (int)SeriesStatusType.Ended });
+            }
+
+            return GetSeries(seriesId);
         }
 
         public bool SeriesPathExists(string folder)

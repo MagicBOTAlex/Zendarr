@@ -1,9 +1,12 @@
-﻿using System.Linq;
+﻿using System;
+using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Download.History;
 using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Queue;
@@ -16,18 +19,24 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         private readonly UpgradableSpecification _upgradableSpecification;
         private readonly ICustomFormatCalculationService _formatService;
         private readonly IConfigService _configService;
+        private readonly IHistoryService _historyService;
+        private readonly IDownloadHistoryService _downloadHistoryService;
         private readonly Logger _logger;
 
         public QueueSpecification(IQueueService queueService,
                                   UpgradableSpecification upgradableSpecification,
                                   ICustomFormatCalculationService formatService,
                                   IConfigService configService,
+                                  IHistoryService historyService,
+                                  IDownloadHistoryService downloadHistoryService,
                                   Logger logger)
         {
             _queueService = queueService;
             _upgradableSpecification = upgradableSpecification;
             _formatService = formatService;
             _configService = configService;
+            _historyService = historyService;
+            _downloadHistoryService = downloadHistoryService;
             _logger = logger;
         }
 
@@ -42,6 +51,23 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         protected override DownloadSpecDecision IsSatisfiedBy(RemoteEpisode subject, ReleaseDecisionInformation information)
         {
             var queue = _queueService.GetQueue();
+            var grabbed = subject.Episodes.SelectMany(e => _historyService.FindByEpisodeId(e.Id))
+                .Where(h => h.EventType == EpisodeHistoryEventType.Grabbed &&
+                            SameRelease(subject.Release, h.SourceTitle, h.DownloadId));
+
+            foreach (var history in grabbed)
+            {
+                if (IsActiveGrab(history.DownloadId, history.Date, queue) &&
+                    !_historyService.FindByDownloadId(history.DownloadId).Any(h =>
+                        h.Date >= history.Date &&
+                        (h.EventType == EpisodeHistoryEventType.DownloadFailed ||
+                         h.EventType == EpisodeHistoryEventType.DownloadIgnored ||
+                         h.EventType == EpisodeHistoryEventType.DownloadFolderImported)))
+                {
+                    return DownloadSpecDecision.Reject(DownloadRejectionReason.QueueHigherPreference, "Release has already been grabbed and is still in progress: {0}", history.SourceTitle);
+                }
+            }
+
             var matchingEpisode = queue.Where(q => q.RemoteEpisode?.Series != null &&
                                                    q.RemoteEpisode.Series.Id == subject.Series.Id &&
                                                    q.RemoteEpisode.Episodes.Select(e => e.Id).Intersect(subject.Episodes.Select(e => e.Id)).Any())
@@ -121,6 +147,22 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         protected override DownloadSpecDecision IsSatisfiedBy(RemoteMovie subject, ReleaseDecisionInformation information)
         {
             var queue = _queueService.GetQueue();
+            var grabbed = _historyService.GetByMovieId(subject.Movie.Id, MovieHistoryEventType.Grabbed)
+                .Where(h => SameRelease(subject.Release, h.SourceTitle, h.DownloadId));
+
+            foreach (var history in grabbed)
+            {
+                if (IsActiveGrab(history.DownloadId, history.Date, queue) &&
+                    !_historyService.FindMovieByDownloadId(history.DownloadId).Any(h =>
+                        h.Date >= history.Date &&
+                        (h.EventType == MovieHistoryEventType.DownloadFailed ||
+                         h.EventType == MovieHistoryEventType.DownloadIgnored ||
+                         h.EventType == MovieHistoryEventType.DownloadFolderImported)))
+                {
+                    return DownloadSpecDecision.Reject(DownloadRejectionReason.QueueHigherPreference, "Release has already been grabbed and is still in progress: {0}", history.SourceTitle);
+                }
+            }
+
             var matchingMovies = queue.Where(q => q.RemoteMovie?.Movie != null &&
                                                   q.RemoteMovie.Movie.Id == subject.Movie.Id)
                                       .ToList();
@@ -191,6 +233,28 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             }
 
             return DownloadSpecDecision.Accept();
+        }
+
+        private static bool SameRelease(ReleaseInfo release, string title, string downloadId)
+        {
+            return release != null && !string.IsNullOrWhiteSpace(downloadId) &&
+                   ((!string.IsNullOrWhiteSpace(release.Title) &&
+                     string.Equals(release.Title, title, StringComparison.OrdinalIgnoreCase)) ||
+                    (release is TorrentInfo torrent && !string.IsNullOrWhiteSpace(torrent.InfoHash) &&
+                     string.Equals(torrent.InfoHash, downloadId, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        private bool IsActiveGrab(string downloadId, DateTime grabbedAt, System.Collections.Generic.List<NzbDrone.Core.Queue.Queue> queue)
+        {
+            // The projection may not yet have been refreshed after startup. History is
+            // durable, but a failed-pending item must remain eligible for replacement.
+            if (queue.Any(q => q.DownloadId == downloadId && q.TrackedDownloadState == TrackedDownloadState.FailedPending))
+            {
+                return false;
+            }
+
+            var latest = _downloadHistoryService.GetLatestDownloadHistoryItem(downloadId);
+            return latest == null || latest.Date < grabbedAt || latest.EventType == DownloadHistoryEventType.DownloadGrabbed;
         }
     }
 }

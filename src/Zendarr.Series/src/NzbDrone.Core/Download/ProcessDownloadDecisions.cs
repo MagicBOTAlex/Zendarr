@@ -42,6 +42,8 @@ namespace NzbDrone.Core.Download
             var grabbed = new List<DownloadDecision>();
             var pending = new List<DownloadDecision>();
             var rejected = decisions.Where(d => d.Rejected).ToList();
+            var failed = new List<DownloadDecision>();
+            var skipped = new List<DownloadDecision>();
 
             var pendingAddQueue = new List<Tuple<DownloadDecision, PendingReleaseReason>>();
 
@@ -55,6 +57,7 @@ namespace NzbDrone.Core.Download
                 // Skip if already grabbed
                 if (IsProcessed(grabbed, report))
                 {
+                    skipped.Add(report);
                     continue;
                 }
 
@@ -95,6 +98,7 @@ namespace NzbDrone.Core.Download
 
                     case ProcessedDecisionResult.Failed:
                         {
+                            failed.Add(report);
                             PreparePending(pendingAddQueue, grabbed, pending, report, PendingReleaseReason.DownloadClientUnavailable);
 
                             if (downloadProtocol == DownloadProtocol.Usenet)
@@ -111,8 +115,12 @@ namespace NzbDrone.Core.Download
 
                     case ProcessedDecisionResult.Skipped:
                         {
+                            skipped.Add(report);
                             break;
                         }
+
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(result), result, "Unknown processed decision result");
                 }
             }
 
@@ -121,7 +129,7 @@ namespace NzbDrone.Core.Download
                 _pendingReleaseService.AddMany(pendingAddQueue);
             }
 
-            return new ProcessedDecisions(grabbed, pending, rejected);
+            return new ProcessedDecisions(grabbed, pending, rejected, failed, skipped);
         }
 
         public async Task<ProcessedDecisionResult> ProcessDecision(DownloadDecision decision, int? downloadClientId)

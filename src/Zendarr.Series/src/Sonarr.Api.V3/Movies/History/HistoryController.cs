@@ -78,6 +78,8 @@ namespace Sonarr.Api.V3.Movies.History
 
             if (eventTypes != null && eventTypes.Any())
             {
+                // Clients may still send the pre-migration numeric movie event values.
+                eventTypes = eventTypes.Select(NormalizeEventType).ToArray();
                 pagingSpec.FilterExpressions.Add(v => eventTypes.Contains((int)v.EventType));
             }
 
@@ -96,16 +98,54 @@ namespace Sonarr.Api.V3.Movies.History
 
         [HttpGet("since")]
         [Produces("application/json")]
-        public List<HistoryResource> GetHistorySince(DateTime date, MovieHistoryEventType? eventType = null, bool includeMovie = false)
+        public ActionResult<List<HistoryResource>> GetHistorySince(DateTime date, string eventType = null, bool includeMovie = false)
         {
-            return _historyService.SinceMovie(date, eventType).Select(h => MapToResource(h, includeMovie)).ToList();
+            if (!TryParseEventType(eventType, out var parsed))
+            {
+                return BadRequest("Invalid history event type");
+            }
+
+            return _historyService.SinceMovie(date, parsed).Select(h => MapToResource(h, includeMovie)).ToList();
         }
 
         [HttpGet("movie")]
         [Produces("application/json")]
-        public List<HistoryResource> GetMovieHistory(int movieId, MovieHistoryEventType? eventType = null, bool includeMovie = false)
+        public ActionResult<List<HistoryResource>> GetMovieHistory(int movieId, string eventType = null, bool includeMovie = false)
         {
-            return _historyService.GetByMovieId(movieId, eventType).Select(h => MapToResource(h, includeMovie)).ToList();
+            if (!TryParseEventType(eventType, out var parsed))
+            {
+                return BadRequest("Invalid history event type");
+            }
+
+            return _historyService.GetByMovieId(movieId, parsed).Select(h => MapToResource(h, includeMovie)).ToList();
+        }
+
+        private static int NormalizeEventType(int value)
+        {
+            return value >= 0 && value <= 9 ? value + 100 : value;
+        }
+
+        private static bool TryParseEventType(string value, out MovieHistoryEventType? result)
+        {
+            result = null;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return true;
+            }
+
+            if (!Enum.TryParse<MovieHistoryEventType>(value, true, out var parsed))
+            {
+                return false;
+            }
+
+            parsed = (MovieHistoryEventType)NormalizeEventType((int)parsed);
+            if (!Enum.IsDefined(typeof(MovieHistoryEventType), parsed))
+            {
+                return false;
+            }
+
+            result = parsed;
+            return true;
         }
 
         [HttpPost("failed/{id}")]

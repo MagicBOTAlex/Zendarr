@@ -19,14 +19,14 @@ namespace Sonarr.Api.V3.Queue
 
         private readonly IPendingReleaseService _pendingReleaseService;
         private readonly IDownloadService _downloadService;
-        private readonly IQueueService _queueService;
+        private readonly IObsoleteQueueService _queueService;
         private readonly ITrackedDownloadService _trackedDownloadService;
         private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly ISubsystemAccessor _subsystemAccessor;
 
         public QueueActionController(IPendingReleaseService pendingReleaseService,
                                      IDownloadService downloadService,
-                                     IQueueService queueService,
+                                     IObsoleteQueueService queueService,
                                      ITrackedDownloadService trackedDownloadService,
                                      IProvideDownloadClient downloadClientProvider,
                                      ISubsystemAccessor subsystemAccessor)

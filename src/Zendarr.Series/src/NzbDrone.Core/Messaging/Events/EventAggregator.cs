@@ -2,13 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Dapper;
 using NLog;
 using NzbDrone.Common;
 using NzbDrone.Common.EnsureThat;
 using NzbDrone.Common.EnvironmentInfo;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Common.Reflection;
 using NzbDrone.Common.TPL;
+using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.History;
+using NzbDrone.Core.History;
+using NzbDrone.Core.ImportLists;
 
 namespace NzbDrone.Core.Messaging.Events
 {
@@ -94,6 +101,11 @@ namespace NzbDrone.Core.Messaging.Events
                     catch (Exception ex)
                     {
                         _logger.Warn(ex, "Unable to resolve event subscribers for {0}, container may be disposed", eventName);
+                        if (@event is DownloadFailedEvent)
+                        {
+                            throw;
+                        }
+
                         return;
                     }
                 }
@@ -101,10 +113,21 @@ namespace NzbDrone.Core.Messaging.Events
                 subscribers = target as EventSubscribers<TEvent>;
             }
 
+            // These two projections must be committed together before any side effects.
+            if (@event is DownloadFailedEvent failed)
+            {
+                PersistFailedHistory(failed);
+            }
+
             // call synchronous handlers first.
             var handlers = subscribers._syncHandlers;
             foreach (var handler in handlers)
             {
+                if (@event is DownloadFailedEvent && (handler is HistoryService || handler is DownloadHistoryService))
+                {
+                    continue;
+                }
+
                 try
                 {
                     _logger.Trace("{0} -> {1}", eventName, handler.GetType().Name);
@@ -142,6 +165,77 @@ namespace NzbDrone.Core.Messaging.Events
                         TaskCreationOptions.PreferFairness)
                 .LogExceptions();
             }
+        }
+
+        private void PersistFailedHistory(DownloadFailedEvent message)
+        {
+            // DownloadHistory requires an ID; do not leave a one-sided failure for
+            // legacy grabs that cannot be correlated to a download.
+            if (string.IsNullOrWhiteSpace(message.DownloadId))
+            {
+                throw new InvalidOperationException("Unable to mark download as failed without a download ID");
+            }
+
+            if (message.MovieId == 0 && (message.EpisodeIds == null || message.EpisodeIds.Count == 0))
+            {
+                throw new InvalidOperationException("Unable to mark download as failed without an episode or movie");
+            }
+
+            using var connection = _serviceFactory.Build<IMainDatabase>().OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            var grab = connection.QueryFirstOrDefault<DownloadHistory>(
+                "SELECT * FROM \"DownloadHistory\" WHERE \"DownloadId\" = @DownloadId AND \"EventType\" = @EventType ORDER BY \"Date\" DESC LIMIT 1",
+                new { message.DownloadId, EventType = DownloadHistoryEventType.DownloadGrabbed }, transaction);
+            var tracked = message.TrackedDownload;
+            var data = new Dictionary<string, string>
+            {
+                ["DownloadClient"] = message.DownloadClient,
+                ["DownloadClientName"] = tracked?.DownloadItem.DownloadClientInfo.Name ?? grab?.Data?.GetValueOrDefault("downloadClientName"),
+                ["Message"] = message.Message,
+                ["Source"] = message.Source,
+                ["ReleaseGroup"] = tracked?.RemoteEpisode?.ParsedEpisodeInfo?.ReleaseGroup ?? tracked?.RemoteMovie?.ParsedMovieInfo?.ReleaseGroup ?? message.Data.GetValueOrDefault("releaseGroup"),
+                ["Size"] = tracked?.DownloadItem.TotalSize.ToString() ?? message.Data.GetValueOrDefault("size"),
+                ["Indexer"] = tracked?.RemoteEpisode?.Release?.Indexer ?? tracked?.RemoteMovie?.Release?.Indexer ?? message.Data.GetValueOrDefault("indexer")
+            };
+
+            var date = DateTime.UtcNow;
+            var historySql = "INSERT INTO \"History\" (\"SeriesId\", \"EpisodeId\", \"MovieId\", \"MediaType\", \"EventType\", \"Date\", \"Quality\", \"Languages\", \"SourceTitle\", \"DownloadId\", \"Data\") VALUES (@SeriesId, @EpisodeId, @MovieId, @MediaType, @EventType, @Date, @Quality, @Languages, @SourceTitle, @DownloadId, @Data)";
+            foreach (var episodeId in message.MovieId > 0 ? new[] { 0 }.AsEnumerable() : message.EpisodeIds.AsEnumerable())
+            {
+                connection.Execute(historySql, new
+                {
+                    message.SeriesId,
+                    EpisodeId = episodeId,
+                    message.MovieId,
+                    MediaType = message.MovieId > 0 ? MediaType.Movie : MediaType.Series,
+                    EventType = message.MovieId > 0 ? (int)MovieHistoryEventType.DownloadFailed : (int)EpisodeHistoryEventType.DownloadFailed,
+                    Date = date,
+                    message.Quality,
+                    message.Languages,
+                    message.SourceTitle,
+                    message.DownloadId,
+                    Data = data
+                }, transaction);
+            }
+
+            var downloadHistory = new DownloadHistory
+            {
+                EventType = DownloadHistoryEventType.DownloadFailed,
+                SeriesId = message.SeriesId,
+                MovieId = message.MovieId,
+                DownloadId = message.DownloadId,
+                SourceTitle = message.SourceTitle,
+                Date = date,
+                Protocol = tracked?.Protocol ?? grab?.Protocol ?? default,
+                DownloadClientId = tracked?.DownloadClient ?? grab?.DownloadClientId ?? 0,
+                Data = new Dictionary<string, string>
+                {
+                    ["DownloadClient"] = tracked?.DownloadItem.DownloadClientInfo.Type ?? message.DownloadClient,
+                    ["DownloadClientName"] = data["DownloadClientName"]
+                }
+            };
+            connection.Execute("INSERT INTO \"DownloadHistory\" (\"EventType\", \"SeriesId\", \"MovieId\", \"DownloadId\", \"SourceTitle\", \"Date\", \"Protocol\", \"IndexerId\", \"DownloadClientId\", \"Release\", \"Data\") VALUES (@EventType, @SeriesId, @MovieId, @DownloadId, @SourceTitle, @Date, @Protocol, @IndexerId, @DownloadClientId, @Release, @Data)", downloadHistory, transaction);
+            transaction.Commit();
         }
 
         private static string GetEventName(Type eventType)

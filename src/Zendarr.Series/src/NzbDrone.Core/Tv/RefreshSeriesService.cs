@@ -69,13 +69,9 @@ namespace NzbDrone.Core.Tv
             }
             catch (SeriesNotFoundException)
             {
-                if (series.Status != SeriesStatusType.Deleted)
-                {
-                    series.Status = SeriesStatusType.Deleted;
-                    _seriesService.UpdateSeries(series, publishUpdatedEvent: false);
-                    _logger.Debug("Series marked as deleted on tvdb for {0}", series.Title);
-                    _eventAggregator.PublishEvent(new SeriesUpdatedEvent(series));
-                }
+                series = _seriesService.UpdateSeriesStatus(series.Id, SeriesStatusType.Deleted);
+                _logger.Debug("Series marked as deleted on tvdb for {0}", series.Title);
+                _eventAggregator.PublishEvent(new SeriesUpdatedEvent(series));
 
                 throw;
             }
@@ -125,7 +121,7 @@ namespace NzbDrone.Core.Tv
 
             series.Seasons = UpdateSeasons(series, seriesInfo);
 
-            _seriesService.UpdateSeries(series, publishUpdatedEvent: false);
+            series = _seriesService.UpdateSeriesMetadata(series);
             _refreshEpisodeService.RefreshEpisodeInfo(series, episodes);
 
             _logger.Debug("Finished series refresh for {0}", series.Title);
@@ -204,7 +200,7 @@ namespace NzbDrone.Core.Tv
 
             if (tagsUpdated)
             {
-                _seriesService.UpdateSeries(series);
+                _seriesService.UpdateTags(new List<Series> { series });
             }
         }
 

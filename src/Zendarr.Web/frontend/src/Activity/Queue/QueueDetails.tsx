@@ -2,12 +2,12 @@ import React from 'react';
 import Icon from 'Components/Icon';
 import Popover from 'Components/Tooltip/Popover';
 import { icons, tooltipPositions } from 'Helpers/Props';
+import { getQueueStatusBadgeFromStatus } from 'Library/Activity/mediaActivityStatus';
 import {
   QueueTrackedDownloadState,
   QueueTrackedDownloadStatus,
   StatusMessage,
 } from 'typings/Queue';
-import translate from 'Utilities/String/translate';
 import QueueStatus from './QueueStatus';
 
 interface QueueDetailsProps {
@@ -36,20 +36,29 @@ function QueueDetails(props: QueueDetailsProps) {
     progressBar,
   } = props;
 
-  const progress = 100 - (sizeLeft / size) * 100;
+  const progress = size ? 100 - (sizeLeft / size) * 100 : 0;
+  const badge = getQueueStatusBadgeFromStatus(
+    status,
+    trackedDownloadStatus,
+    trackedDownloadState
+  );
   const isDownloading = status === 'downloading';
   const isPaused = status === 'paused';
   const hasWarning = trackedDownloadStatus === 'warning';
   const hasError = trackedDownloadStatus === 'error';
 
-  if ((isDownloading || isPaused) && !hasWarning && !hasError) {
-    const state = isPaused ? translate('Paused') : translate('Downloading');
-
+  if (
+    (isDownloading || isPaused) &&
+    !hasWarning &&
+    !hasError &&
+    badge.kind !== 'danger'
+  ) {
     if (progress < 5) {
       return (
         <Icon
-          name={icons.DOWNLOADING}
-          title={`${state} - ${progress.toFixed(1)}% ${title}`}
+          name={isPaused ? icons.PAUSED : icons.DOWNLOADING}
+          kind={badge.kind}
+          title={`${badge.label} - ${progress.toFixed(1)}% ${title}`}
         />
       );
     }
@@ -58,7 +67,7 @@ function QueueDetails(props: QueueDetailsProps) {
       <Popover
         className="flex w-full justify-center"
         anchor={progressBar!}
-        title={`${state} - ${progress.toFixed(1)}%`}
+        title={`${badge.label} - ${progress.toFixed(1)}%`}
         body={<div>{title}</div>}
         position="bottom-start"
       />

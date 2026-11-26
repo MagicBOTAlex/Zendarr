@@ -140,6 +140,14 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
                         }
 
                         oldFiles = _episodeFileUpgrader.UpgradeEpisodeFile(episodeFile, localEpisode, copyOnly).OldFiles;
+
+                        // The destination path is only known after the upgrader has moved the file.
+                        // Do not create a second record if another episode already owns that path.
+                        if (_mediaFileService.GetFilesWithRelativePath(localEpisode.Series.Id, episodeFile.RelativePath).Any())
+                        {
+                            importResults.Add(new ImportResult(importDecision, "An episode file already exists at the destination path"));
+                            continue;
+                        }
                     }
                     else
                     {

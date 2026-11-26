@@ -6,6 +6,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
@@ -98,7 +99,13 @@ namespace NzbDrone.Core.History
 
         public EpisodeHistory Get(int historyId)
         {
-            return _historyRepository.Get(historyId);
+            var history = _historyRepository.Get(historyId);
+            if (history.MediaType == MediaType.Movie)
+            {
+                throw new ModelNotFoundException(typeof(EpisodeHistory), historyId);
+            }
+
+            return history;
         }
 
         public List<EpisodeHistory> GetBySeries(int seriesId, EpisodeHistoryEventType? eventType)
@@ -341,6 +348,7 @@ namespace NzbDrone.Core.History
                     SourceTitle = message.EpisodeFile.Path,
                     SeriesId = message.EpisodeFile.SeriesId,
                     EpisodeId = episode.Id,
+                    DownloadId = FindEpisodeFileDownloadId(episode.Id, message.EpisodeFile.Id),
                     Languages = message.EpisodeFile.Languages
                 };
 
@@ -371,6 +379,7 @@ namespace NzbDrone.Core.History
                     SourceTitle = message.OriginalPath,
                     SeriesId = message.EpisodeFile.SeriesId,
                     EpisodeId = episode.Id,
+                    DownloadId = FindEpisodeFileDownloadId(episode.Id, message.EpisodeFile.Id),
                     Languages = message.EpisodeFile.Languages
                 };
 
@@ -498,14 +507,9 @@ namespace NzbDrone.Core.History
 
         public void Handle(MovieFileImportedEvent message)
         {
-            if (!message.NewDownload)
-            {
-                return;
-            }
-
             var downloadId = message.DownloadId;
 
-            if (downloadId.IsNullOrWhiteSpace())
+            if (message.NewDownload && downloadId.IsNullOrWhiteSpace())
             {
                 downloadId = FindDownloadId(message);
             }
@@ -513,7 +517,7 @@ namespace NzbDrone.Core.History
             var movie = message.MovieInfo.Movie;
             var history = new MovieHistory
             {
-                EventType = MovieHistoryEventType.DownloadFolderImported,
+                EventType = message.NewDownload ? MovieHistoryEventType.DownloadFolderImported : MovieHistoryEventType.MovieFolderImported,
                 Date = DateTime.UtcNow,
                 Quality = message.MovieInfo.Quality,
                 Languages = message.MovieInfo.Languages,
@@ -550,7 +554,8 @@ namespace NzbDrone.Core.History
                 Quality = message.MovieFile.Quality,
                 Languages = message.MovieFile.Languages,
                 SourceTitle = message.MovieFile.Path,
-                MovieId = message.MovieFile.MovieId
+                MovieId = message.MovieFile.MovieId,
+                DownloadId = FindMovieFileDownloadId(message.MovieFile.MovieId, message.MovieFile.Id)
             };
 
             history.Data.Add("Reason", message.Reason.ToString());
@@ -576,6 +581,7 @@ namespace NzbDrone.Core.History
                 Languages = message.MovieFile.Languages,
                 SourceTitle = message.OriginalPath,
                 MovieId = message.MovieFile.MovieId,
+                DownloadId = FindMovieFileDownloadId(message.MovieFile.MovieId, message.MovieFile.Id),
             };
 
             history.Data.Add("SourcePath", sourcePath);
@@ -592,6 +598,26 @@ namespace NzbDrone.Core.History
         public void Handle(MoviesDeletedEvent message)
         {
             _historyRepository.DeleteForMovies(message.Movies.Select(m => m.Id).ToList());
+        }
+
+        private string FindEpisodeFileDownloadId(int episodeId, int fileId)
+        {
+            return _historyRepository.FindByEpisodeId(episodeId)
+                .Where(h => h.EventType == EpisodeHistoryEventType.DownloadFolderImported &&
+                            h.Data.GetValueOrDefault("FileId") == fileId.ToString() &&
+                            !h.DownloadId.IsNullOrWhiteSpace())
+                .Select(h => h.DownloadId)
+                .FirstOrDefault();
+        }
+
+        private string FindMovieFileDownloadId(int movieId, int fileId)
+        {
+            return _historyRepository.FindByMovieId(movieId)
+                .Where(h => h.EventType == MovieHistoryEventType.DownloadFolderImported &&
+                            h.Data.GetValueOrDefault("FileId") == fileId.ToString() &&
+                            !h.DownloadId.IsNullOrWhiteSpace())
+                .Select(h => h.DownloadId)
+                .FirstOrDefault();
         }
 
         public List<EpisodeHistory> Since(DateTime date, EpisodeHistoryEventType? eventType)

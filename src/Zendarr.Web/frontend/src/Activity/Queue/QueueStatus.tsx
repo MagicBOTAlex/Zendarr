@@ -1,14 +1,14 @@
 import React from 'react';
-import Icon, { IconKind } from 'Components/Icon';
+import Icon from 'Components/Icon';
 import Popover from 'Components/Tooltip/Popover';
-import { icons, kinds } from 'Helpers/Props';
+import { icons } from 'Helpers/Props';
 import { TooltipPosition } from 'Helpers/Props/tooltipPositions';
+import { getQueueStatusBadgeFromStatus } from 'Library/Activity/mediaActivityStatus';
 import {
   QueueTrackedDownloadState,
   QueueTrackedDownloadStatus,
   StatusMessage,
 } from 'typings/Queue';
-import translate from 'Utilities/String/translate';
 
 function getDetailedPopoverBody(statusMessages: StatusMessage[]) {
   return (
@@ -58,96 +58,32 @@ function QueueStatus(props: QueueStatusProps) {
   const hasWarning = trackedDownloadStatus === 'warning';
   const hasError = trackedDownloadStatus === 'error';
 
-  // status === 'downloading'
+  const badge = getQueueStatusBadgeFromStatus(
+    status,
+    trackedDownloadStatus,
+    trackedDownloadState
+  );
   let iconName = icons.DOWNLOADING;
-  let iconKind: IconKind = kinds.DEFAULT;
-  let title = translate('Downloading');
 
   if (status === 'paused') {
     iconName = icons.PAUSED;
-    title = translate('Paused');
-  }
-
-  if (status === 'queued') {
+  } else if (status === 'queued') {
     iconName = icons.QUEUED;
-    title = translate('Queued');
-  }
-
-  if (status === 'completed') {
-    iconName = icons.DOWNLOADED;
-    title = translate('Downloaded');
-
-    if (trackedDownloadState === 'importBlocked') {
-      title += ` - ${translate('UnableToImportAutomatically')}`;
-      iconKind = kinds.WARNING;
-    }
-
-    if (trackedDownloadState === 'importPending') {
-      title += ` - ${translate('WaitingToImport')}`;
-      iconKind = kinds.PURPLE;
-    }
-
-    if (trackedDownloadState === 'importing') {
-      title += ` - ${translate('Importing')}`;
-      iconKind = kinds.PRIMARY;
-    }
-
-    if (trackedDownloadState === 'failedPending') {
-      title += ` - ${translate('WaitingToProcess')}`;
-      iconKind = kinds.DANGER;
-    }
-  }
-
-  if (hasWarning) {
-    iconKind = kinds.WARNING;
-  }
-
-  if (status === 'delay') {
+  } else if (status === 'completed') {
+    iconName = hasError ? icons.DOWNLOAD : icons.DOWNLOADED;
+  } else if (status === 'delay' || status === 'downloadClientUnavailable') {
     iconName = icons.PENDING;
-    title = translate('Pending');
-  }
-
-  if (status === 'downloadClientUnavailable') {
-    iconName = icons.PENDING;
-    iconKind = kinds.WARNING;
-    title = translate('PendingDownloadClientUnavailable');
-  }
-
-  if (status === 'failed') {
-    iconName = icons.DOWNLOADING;
-    iconKind = kinds.DANGER;
-    title = translate('DownloadFailed');
-  }
-
-  if (status === 'warning') {
-    iconName = icons.DOWNLOADING;
-    iconKind = kinds.WARNING;
-    const warningMessage =
-      errorMessage || translate('CheckDownloadClientForDetails');
-    title = translate('DownloadWarning', { warningMessage });
-  }
-
-  if (hasError) {
-    if (status === 'completed') {
-      iconName = icons.DOWNLOAD;
-      iconKind = kinds.DANGER;
-      title = translate('ImportFailed', { sourceTitle });
-    } else {
-      iconName = icons.DOWNLOADING;
-      iconKind = kinds.DANGER;
-      title = translate('DownloadFailed');
-    }
   }
 
   return (
     <Popover
-      anchor={<Icon name={iconName} kind={iconKind} />}
-      accessibleLabel={title}
-      title={title}
+      anchor={<Icon name={iconName} kind={badge.kind} />}
+      accessibleLabel={badge.label}
+      title={badge.label}
       body={
         hasWarning || hasError
           ? getDetailedPopoverBody(statusMessages)
-          : sourceTitle
+          : errorMessage || sourceTitle
       }
       position={position}
       canFlip={canFlip}

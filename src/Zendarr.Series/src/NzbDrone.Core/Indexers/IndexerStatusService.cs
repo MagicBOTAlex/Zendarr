@@ -33,7 +33,14 @@ namespace NzbDrone.Core.Indexers
 
                 status.LastRssSyncReleaseInfo = releaseInfo;
 
-                _providerStatusRepository.Upsert(status);
+                if (status.Id == 0)
+                {
+                    _providerStatusRepository.Insert(status);
+                }
+                else
+                {
+                    _providerStatusRepository.SetFields(status, s => s.LastRssSyncReleaseInfo);
+                }
             }
         }
     }

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Messaging.Events;
@@ -106,27 +105,6 @@ namespace NzbDrone.Core.Download
 
                 yield return client;
             }
-        }
-
-        public override ValidationResult Test(DownloadClientDefinition definition)
-        {
-            var result = base.Test(definition);
-
-            if (definition.Id == 0)
-            {
-                return result;
-            }
-
-            if (result == null || result.IsValid)
-            {
-                _downloadClientStatusService.RecordSuccess(definition.Id);
-            }
-            else
-            {
-                _downloadClientStatusService.RecordFailure(definition.Id);
-            }
-
-            return result;
         }
     }
 }

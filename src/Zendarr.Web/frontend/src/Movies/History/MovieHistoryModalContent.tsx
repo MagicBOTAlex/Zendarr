@@ -1,5 +1,6 @@
 import React from 'react';
 import HistoryEventTypeCell from 'Activity/History/HistoryEventTypeCell';
+import type { DisplayHistoryEventType } from 'Activity/History/HistoryEventTypeCell';
 import Alert from 'Components/Alert';
 import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
@@ -17,12 +18,12 @@ import useApiQuery from 'Helpers/Hooks/useApiQuery';
 import { kinds } from 'Helpers/Props';
 import Language from 'Language/Language';
 import { QualityModel } from 'Quality/Quality';
-import { HistoryData, HistoryEventType } from 'typings/History';
+import { HistoryData } from 'typings/History';
 import translate from 'Utilities/String/translate';
 
 interface MovieHistoryItem {
   id: number;
-  eventType: HistoryEventType;
+  eventType: DisplayHistoryEventType;
   sourceTitle: string;
   languages?: Language[];
   quality?: QualityModel;

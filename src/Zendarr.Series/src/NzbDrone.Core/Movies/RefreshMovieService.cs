@@ -23,6 +23,7 @@ namespace NzbDrone.Core.Movies
 {
     public class RefreshMovieService : IExecute<RefreshMovieCommand>
     {
+        private static readonly object MetadataWriteLock = new object();
         private readonly IProvideMovieInfo _movieInfo;
         private readonly IMovieService _movieService;
         private readonly IAddMovieCollectionService _movieCollectionService;
@@ -86,11 +87,22 @@ namespace NzbDrone.Core.Movies
             }
             catch (MovieNotFoundException)
             {
-                if (movieMetadata.Status != MovieStatusType.Deleted)
+                var markedDeleted = false;
+                lock (MetadataWriteLock)
                 {
-                    movieMetadata.Status = MovieStatusType.Deleted;
-                    _movieMetadataService.Upsert(movieMetadata);
-                    _logger.Debug("Movie marked as deleted on TMDb for {0}", movie.Title);
+                    var currentMetadata = _movieMetadataService.Get(movie.MovieMetadataId);
+                    if (currentMetadata.Status != MovieStatusType.Deleted)
+                    {
+                        currentMetadata.Status = MovieStatusType.Deleted;
+                        _movieMetadataService.Upsert(currentMetadata);
+                        movie.MovieMetadata = currentMetadata;
+                        _logger.Debug("Movie marked as deleted on TMDb for {0}", movie.Title);
+                        markedDeleted = true;
+                    }
+                }
+
+                if (markedDeleted)
+                {
                     _eventAggregator.PublishEvent(new MovieUpdatedEvent(movie));
                 }
 
@@ -106,7 +118,6 @@ namespace NzbDrone.Core.Movies
             movieMetadata.Title = movieInfo.Title;
             movieMetadata.ImdbId = movieInfo.ImdbId;
             movieMetadata.Overview = movieInfo.Overview;
-            movieMetadata.Status = movieInfo.Status;
             movieMetadata.Images = movieInfo.Images;
             movieMetadata.CleanTitle = movieInfo.CleanTitle;
             movieMetadata.SortTitle = movieInfo.SortTitle;
@@ -163,7 +174,16 @@ namespace NzbDrone.Core.Movies
             _movieTranslationService.UpdateTranslations(movieInfo.Translations, movieMetadata);
             _creditService.UpdateCredits(credits, movieMetadata);
 
-            _movieMetadataService.Upsert(movieMetadata);
+            lock (MetadataWriteLock)
+            {
+                // A concurrent refresh may have marked this movie deleted or released
+                // while the provider request and metadata updates were in flight.
+                var currentStatus = _movieMetadataService.Get(movie.MovieMetadataId).Status;
+                movieMetadata.Status = currentStatus is MovieStatusType.Released or MovieStatusType.Deleted
+                    ? currentStatus
+                    : movieInfo.Status;
+                _movieMetadataService.Upsert(movieMetadata);
+            }
 
             movie.MovieMetadata = movieMetadata;
 

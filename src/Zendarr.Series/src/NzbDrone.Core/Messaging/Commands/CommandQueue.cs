@@ -28,6 +28,18 @@ namespace NzbDrone.Core.Messaging.Commands
             }
         }
 
+        public void AddIfQueuedAndAbsent(CommandModel item)
+        {
+            lock (_mutex)
+            {
+                if (item.Status == CommandStatus.Queued && !_items.Any(c => c.Id == item.Id))
+                {
+                    _items.Add(item);
+                    Monitor.PulseAll(_mutex);
+                }
+            }
+        }
+
         public IEnumerator<CommandModel> GetEnumerator()
         {
             List<CommandModel> copy = null;
@@ -75,7 +87,7 @@ namespace NzbDrone.Core.Messaging.Commands
             }
         }
 
-        public bool RemoveIfQueued(int id)
+        public bool RemoveIfQueued(int id, Action<CommandModel> beforeRemove)
         {
             var rval = false;
 
@@ -85,6 +97,7 @@ namespace NzbDrone.Core.Messaging.Commands
 
                 if (command?.Status == CommandStatus.Queued)
                 {
+                    beforeRemove(command);
                     _items.Remove(command);
                     rval = true;
 

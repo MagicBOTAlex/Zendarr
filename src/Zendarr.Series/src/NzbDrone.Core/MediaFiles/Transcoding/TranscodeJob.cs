@@ -56,6 +56,13 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
 
     public class TranscodeJob : ModelBase
     {
+        // Review is terminal for encoding; only an explicit review action may leave it.
+        public bool IsTerminal() => Status == TranscodeJobStatus.AwaitingReview ||
+                                    Status == TranscodeJobStatus.Completed ||
+                                    Status == TranscodeJobStatus.Failed ||
+                                    Status == TranscodeJobStatus.Cancelled ||
+                                    Status == TranscodeJobStatus.Skipped;
+
         public MediaType MediaType { get; set; }
         public int? EpisodeFileId { get; set; }
         public int? MovieFileId { get; set; }

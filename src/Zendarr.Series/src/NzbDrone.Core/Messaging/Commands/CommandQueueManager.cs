@@ -218,17 +218,39 @@ namespace NzbDrone.Core.Messaging.Commands
 
         public void Requeue()
         {
-            foreach (var command in _repo.Queued())
+            lock (_commandQueue)
             {
-                _commandQueue.Add(command);
+                foreach (var command in _repo.Queued())
+                {
+                    _commandQueue.AddIfQueuedAndAbsent(command);
+                }
             }
         }
 
         public void Cancel(int id)
         {
-            if (!_commandQueue.RemoveIfQueued(id))
+            lock (_commandQueue)
             {
-                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Unable to cancel task");
+                if (!_commandQueue.RemoveIfQueued(id, command =>
+                    {
+                        var endedAt = command.EndedAt;
+                        command.Status = CommandStatus.Cancelled;
+                        command.EndedAt = DateTime.UtcNow;
+
+                        try
+                        {
+                            _repo.End(command);
+                        }
+                        catch
+                        {
+                            command.Status = CommandStatus.Queued;
+                            command.EndedAt = endedAt;
+                            throw;
+                        }
+                    }))
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.Conflict, "Unable to cancel task");
+                }
             }
         }
 

@@ -63,12 +63,12 @@ namespace NzbDrone.Core.History
 
         public EpisodeHistory MostRecentForEpisode(int episodeId)
         {
-            return Query(h => h.EpisodeId == episodeId).MaxBy(h => h.Date);
+            return Query(h => h.EpisodeId == episodeId && h.MediaType != MediaType.Movie).MaxBy(h => h.Date);
         }
 
         public List<EpisodeHistory> FindByEpisodeId(int episodeId)
         {
-            return Query(h => h.EpisodeId == episodeId)
+            return Query(h => h.EpisodeId == episodeId && h.MediaType != MediaType.Movie)
                         .OrderByDescending(h => h.Date)
                         .ToList();
         }
@@ -89,7 +89,7 @@ namespace NzbDrone.Core.History
         {
             var builder = Builder().Join<EpisodeHistory, Series>((h, a) => h.SeriesId == a.Id)
                                    .Join<EpisodeHistory, Episode>((h, a) => h.EpisodeId == a.Id)
-                                   .Where<EpisodeHistory>(h => h.SeriesId == seriesId);
+                                   .Where<EpisodeHistory>(h => h.SeriesId == seriesId && h.MediaType != MediaType.Movie);
 
             if (eventType.HasValue)
             {
@@ -104,7 +104,7 @@ namespace NzbDrone.Core.History
             var builder = Builder()
                 .Join<EpisodeHistory, Episode>((h, a) => h.EpisodeId == a.Id)
                 .Join<EpisodeHistory, Series>((h, a) => h.SeriesId == a.Id)
-                .Where<EpisodeHistory>(h => h.SeriesId == seriesId && h.Episode.SeasonNumber == seasonNumber);
+                .Where<EpisodeHistory>(h => h.SeriesId == seriesId && h.MediaType != MediaType.Movie && h.Episode.SeasonNumber == seasonNumber);
 
             if (eventType.HasValue)
             {
@@ -125,7 +125,7 @@ namespace NzbDrone.Core.History
             var builder = Builder()
                 .Join<EpisodeHistory, Series>((h, a) => h.SeriesId == a.Id)
                 .Join<EpisodeHistory, Episode>((h, a) => h.EpisodeId == a.Id)
-                .Where<EpisodeHistory>(h => h.EpisodeId == episodeId);
+                .Where<EpisodeHistory>(h => h.EpisodeId == episodeId && h.MediaType != MediaType.Movie);
 
             if (eventType.HasValue)
             {
@@ -139,6 +139,7 @@ namespace NzbDrone.Core.History
         {
             return Query(h =>
                  h.SeriesId == idSeriesId &&
+                 h.MediaType != MediaType.Movie &&
                  h.Quality == quality &&
                  (h.EventType == EpisodeHistoryEventType.Grabbed ||
                  h.EventType == EpisodeHistoryEventType.DownloadFailed ||
@@ -148,7 +149,7 @@ namespace NzbDrone.Core.History
 
         public void DeleteForSeries(List<int> seriesIds)
         {
-            Delete(c => seriesIds.Contains(c.SeriesId));
+            Delete(c => seriesIds.Contains(c.SeriesId) && c.MediaType != MediaType.Movie);
         }
 
         public List<EpisodeHistory> Since(DateTime date, EpisodeHistoryEventType? eventType)
@@ -156,7 +157,7 @@ namespace NzbDrone.Core.History
             var builder = Builder()
                 .Join<EpisodeHistory, Series>((h, a) => h.SeriesId == a.Id)
                 .Join<EpisodeHistory, Episode>((h, a) => h.EpisodeId == a.Id)
-                .Where<EpisodeHistory>(x => x.Date >= date);
+                .Where<EpisodeHistory>(x => x.Date >= date && x.MediaType != MediaType.Movie);
 
             if (eventType.HasValue)
             {
@@ -188,7 +189,8 @@ namespace NzbDrone.Core.History
         {
             var builder = Builder()
                 .Join<EpisodeHistory, Series>((h, a) => h.SeriesId == a.Id)
-                .Join<EpisodeHistory, Episode>((h, a) => h.EpisodeId == a.Id);
+                .Join<EpisodeHistory, Episode>((h, a) => h.EpisodeId == a.Id)
+                .Where<EpisodeHistory>(h => h.MediaType != MediaType.Movie);
 
             if (joinQualityRanks)
             {
@@ -257,25 +259,26 @@ namespace NzbDrone.Core.History
 
         public List<QualityModel> GetBestQualityInHistory(int movieId)
         {
-            return _database.Query<MovieHistory>(Builder().Where<MovieHistory>(x => x.MovieId == movieId))
+            return _database.Query<MovieHistory>(Builder().Where<MovieHistory>(x => x.MovieId == movieId && x.MediaType == MediaType.Movie))
                             .Select(h => h.Quality)
                             .ToList();
         }
 
         public MovieHistory MostRecentForMovie(int movieId)
         {
-            return _database.Query<MovieHistory>(Builder().Where<MovieHistory>(h => h.MovieId == movieId))
+            return _database.Query<MovieHistory>(Builder().Where<MovieHistory>(h => h.MovieId == movieId && h.MediaType == MediaType.Movie))
                             .MaxBy(h => h.Date);
         }
 
         public MovieHistory GetMovie(int historyId)
         {
-            return _movieRepository.Get(historyId);
+            var history = _database.Query<MovieHistory>(Builder().Where<MovieHistory>(h => h.Id == historyId && h.MediaType == MediaType.Movie)).FirstOrDefault();
+            return history ?? throw new ModelNotFoundException(typeof(MovieHistory), historyId);
         }
 
         public List<MovieHistory> FindByMovieId(int movieId)
         {
-            return _database.Query<MovieHistory>(Builder().Where<MovieHistory>(h => h.MovieId == movieId))
+            return _database.Query<MovieHistory>(Builder().Where<MovieHistory>(h => h.MovieId == movieId && h.MediaType == MediaType.Movie))
                             .OrderByDescending(h => h.Date)
                             .ToList();
         }
@@ -303,6 +306,7 @@ namespace NzbDrone.Core.History
 
             return _database.Query<MovieHistory>(Builder().Where<MovieHistory>(h =>
                 h.MovieId == movieId &&
+                h.MediaType == MediaType.Movie &&
                 h.Quality == quality &&
                 allowed.Contains((int)h.EventType))).ToList();
         }
@@ -312,7 +316,7 @@ namespace NzbDrone.Core.History
             var builder = Builder()
                 .Join<MovieHistory, Movie>((h, m) => h.MovieId == m.Id)
                 .Join<Movie, QualityProfile>((m, p) => m.QualityProfileId == p.Id)
-                .Where<MovieHistory>(h => h.MovieId == movieId);
+                .Where<MovieHistory>(h => h.MovieId == movieId && h.MediaType == MediaType.Movie);
 
             if (eventType.HasValue)
             {
@@ -331,7 +335,7 @@ namespace NzbDrone.Core.History
 
         public void DeleteForMovies(List<int> movieIds)
         {
-            Delete(Builder().Where<MovieHistory>(c => movieIds.Contains(c.MovieId)));
+            Delete(Builder().Where<MovieHistory>(c => movieIds.Contains(c.MovieId) && c.MediaType == MediaType.Movie));
         }
 
         public List<MovieHistory> SinceMovie(DateTime date, MovieHistoryEventType? eventType)
@@ -339,7 +343,7 @@ namespace NzbDrone.Core.History
             var builder = Builder()
                 .Join<MovieHistory, Movie>((h, m) => h.MovieId == m.Id)
                 .Join<Movie, QualityProfile>((m, p) => m.QualityProfileId == p.Id)
-                .Where<MovieHistory>(x => x.Date >= date);
+                .Where<MovieHistory>(x => x.Date >= date && x.MediaType == MediaType.Movie);
 
             if (eventType.HasValue)
             {
@@ -397,7 +401,8 @@ namespace NzbDrone.Core.History
                 var builder = Builder()
                     .Join<MovieHistory, Movie>((h, m) => h.MovieId == m.Id)
                     .Join<Movie, QualityProfile>((m, p) => m.QualityProfileId == p.Id)
-                    .Join<Movie, MovieMetadata>((m, md) => m.MovieMetadataId == md.Id);
+                    .Join<Movie, MovieMetadata>((m, md) => m.MovieMetadataId == md.Id)
+                    .Where<MovieHistory>(h => h.MediaType == MediaType.Movie);
 
                 if (_languages is { Length: > 0 })
                 {

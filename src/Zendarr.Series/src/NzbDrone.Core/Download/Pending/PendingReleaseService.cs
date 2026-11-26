@@ -396,39 +396,25 @@ namespace NzbDrone.Core.Download.Pending
 
         public void RemovePendingQueueItems(int queueId)
         {
-            var targetItem = FindPendingRelease(queueId);
-
-            if (IsMovieRelease(targetItem))
-            {
-                var movieReleases = _repository.AllByMovieId(targetItem.MovieId);
-
-                var movieReleasesToRemove = movieReleases.Where(
-                    c => c.ParsedMovieInfo.PrimaryMovieTitle == targetItem.ParsedMovieInfo.PrimaryMovieTitle);
-
-                _repository.DeleteMany(movieReleasesToRemove.Select(c => c.Id));
-
-                return;
-            }
-
-            var seriesReleases = _repository.AllBySeriesId(targetItem.SeriesId);
-
-            var releasesToRemove = seriesReleases.Where(
-                c => c.ParsedEpisodeInfo.SeasonNumber == targetItem.ParsedEpisodeInfo.SeasonNumber &&
-                     c.ParsedEpisodeInfo.EpisodeNumbers.SequenceEqual(targetItem.ParsedEpisodeInfo.EpisodeNumbers));
-
-            _repository.DeleteMany(releasesToRemove.Select(c => c.Id));
+            RemovePendingRelease(FindPendingRelease(queueId));
         }
 
         public void RemovePendingQueueItemsObsolete(int queueId)
         {
-            var targetItem = FindPendingReleaseObsolete(queueId);
-            var seriesReleases = _repository.AllBySeriesId(targetItem.SeriesId);
+            RemovePendingRelease(FindPendingReleaseObsolete(queueId));
+        }
 
-            var releasesToRemove = seriesReleases.Where(
-                c => c.ParsedEpisodeInfo.SeasonNumber == targetItem.ParsedEpisodeInfo.SeasonNumber &&
-                     c.ParsedEpisodeInfo.EpisodeNumbers.SequenceEqual(targetItem.ParsedEpisodeInfo.EpisodeNumbers));
+        private void RemovePendingRelease(PendingRelease pendingRelease)
+        {
+            // Multiple legacy episode queue IDs can identify the same pending release.
+            if (pendingRelease == null)
+            {
+                return;
+            }
 
-            _repository.DeleteMany(releasesToRemove.Select(c => c.Id));
+            _repository.Delete(pendingRelease.Id);
+            UpdatePendingReleases();
+            _eventAggregator.PublishEvent(new PendingReleasesUpdatedEvent());
         }
 
         public RemoteEpisode OldestPendingRelease(int seriesId, int[] episodeIds)
@@ -982,14 +968,16 @@ namespace NzbDrone.Core.Download.Pending
 
         private PendingRelease FindPendingRelease(int queueId)
         {
-            return GetPendingReleases().First(p =>
+            return GetPendingReleases().FirstOrDefault(p =>
                 GetQueueId(p) == queueId ||
                 (p.RemoteMovie?.Movie != null && GetQueueId(p, p.RemoteMovie.Movie) == queueId));
         }
 
         private PendingRelease FindPendingReleaseObsolete(int queueId)
         {
-            return GetPendingReleases().First(p => p.RemoteEpisode != null && p.RemoteEpisode.Episodes.Any(e => queueId == GetQueueId(p, e)));
+            return GetPendingReleases().FirstOrDefault(p => p.RemoteEpisode != null &&
+                (p.RemoteEpisode.Episodes.Any(e => queueId == GetQueueId(p, e)) ||
+                 (p.RemoteEpisode.Episodes.Empty() && queueId == GetQueueId(p, (Episode)null))));
         }
 
         private int GetQueueId(PendingRelease pendingRelease)

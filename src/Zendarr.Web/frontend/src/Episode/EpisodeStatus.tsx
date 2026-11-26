@@ -7,6 +7,10 @@ import StatusIndicator from 'Components/StatusIndicator';
 import useEpisode, { EpisodeEntity } from 'Episode/useEpisode';
 import { useEpisodeFile } from 'EpisodeFile/EpisodeFileProvider';
 import { icons, kinds, sizes } from 'Helpers/Props';
+import {
+  getProgressBarKind,
+  getQueueStatusBadgeFromStatus,
+} from 'Library/Activity/mediaActivityStatus';
 import isBefore from 'Utilities/Date/isBefore';
 import translate from 'Utilities/String/translate';
 import EpisodeQuality from './EpisodeQuality';
@@ -26,8 +30,8 @@ function EpisodeStatus({
   const queueItem = useQueueItemForEpisode(episodeId);
   const episodeFile = useEpisodeFile(episodeFileId);
 
-  const { airDateUtc, grabbed, monitored } = episode || {};
-  const hasEpisodeFile = !!episodeFile;
+  const { airDateUtc, grabbed, monitored, hasFile } = episode || {};
+  const hasEpisodeFile = !!episodeFile || !!hasFile;
   const isQueued = !!queueItem;
   const hasAired = isBefore(airDateUtc);
 
@@ -35,22 +39,43 @@ function EpisodeStatus({
     return null;
   }
 
+  if (hasEpisodeFile) {
+    const label = translate('EpisodeDownloaded');
+
+    return (
+      <StatusIndicator className="flex justify-center" label={label}>
+        {episodeFile ? (
+          <EpisodeQuality
+            quality={episodeFile.quality}
+            size={episodeFile.size}
+            isCutoffNotMet={episodeFile.qualityCutoffNotMet}
+            title={label}
+          />
+        ) : (
+          <Icon name={icons.DOWNLOADED} title={label} />
+        )}
+      </StatusIndicator>
+    );
+  }
+
   if (isQueued) {
     const { sizeLeft, size } = queueItem;
+    const badge = getQueueStatusBadgeFromStatus(
+      queueItem.status,
+      queueItem.trackedDownloadStatus,
+      queueItem.trackedDownloadState
+    );
 
     const progress = size ? 100 - (sizeLeft / size) * 100 : 0;
 
     return (
-      <StatusIndicator
-        className="flex justify-center"
-        label={translate('EpisodeIsDownloading')}
-      >
+      <StatusIndicator className="flex justify-center" label={badge.label}>
         <QueueDetails
           {...queueItem}
           progressBar={
             <ProgressBar
               progress={progress}
-              kind={kinds.PURPLE}
+              kind={getProgressBarKind(badge.kind)}
               size={sizes.MEDIUM}
             />
           }
@@ -69,23 +94,6 @@ function EpisodeStatus({
         title={label}
       >
         <Icon name={icons.DOWNLOADING} />
-      </StatusIndicator>
-    );
-  }
-
-  if (hasEpisodeFile) {
-    const quality = episodeFile.quality;
-    const isCutoffNotMet = episodeFile.qualityCutoffNotMet;
-    const label = translate('EpisodeDownloaded');
-
-    return (
-      <StatusIndicator className="flex justify-center" label={label}>
-        <EpisodeQuality
-          quality={quality}
-          size={episodeFile.size}
-          isCutoffNotMet={isCutoffNotMet}
-          title={label}
-        />
       </StatusIndicator>
     );
   }

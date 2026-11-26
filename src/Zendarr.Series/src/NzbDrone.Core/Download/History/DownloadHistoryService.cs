@@ -12,7 +12,6 @@ namespace NzbDrone.Core.Download.History
 {
     public interface IDownloadHistoryService
     {
-        bool DownloadAlreadyImported(string downloadId);
         DownloadHistory GetLatestDownloadHistoryItem(string downloadId);
         DownloadHistory GetLatestGrab(string downloadId);
     }
@@ -37,28 +36,6 @@ namespace NzbDrone.Core.Download.History
             _historyService = historyService;
         }
 
-        public bool DownloadAlreadyImported(string downloadId)
-        {
-            var events = _repository.FindByDownloadId(downloadId);
-
-            // Events are ordered by date descending, if a grabbed event comes before an imported event then it was never imported
-            // or grabbed again after importing and should be reprocessed.
-            foreach (var e in events)
-            {
-                if (e.EventType == DownloadHistoryEventType.DownloadGrabbed)
-                {
-                    return false;
-                }
-
-                if (e.EventType == DownloadHistoryEventType.DownloadImported)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         public DownloadHistory GetLatestDownloadHistoryItem(string downloadId)
         {
             var events = _repository.FindByDownloadId(downloadId);
@@ -77,6 +54,11 @@ namespace NzbDrone.Core.Download.History
                 }
 
                 if (e.EventType == DownloadHistoryEventType.DownloadImported)
+                {
+                    return e;
+                }
+
+                if (e.EventType == DownloadHistoryEventType.FileImported)
                 {
                     return e;
                 }

@@ -253,7 +253,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
             if (parsedEpisodeInfo != null)
             {
-                trackedDownload.SetEpisode(downloadHistory is { EventType: DownloadHistoryEventType.DownloadImported }
+                trackedDownload.SetEpisode(downloadHistory is { EventType: DownloadHistoryEventType.DownloadImported or DownloadHistoryEventType.FileImported }
                     ? _parsingService.Map(parsedEpisodeInfo, _seriesService.GetSeries(downloadHistory.SeriesId))
                     : _parsingService.Map(parsedEpisodeInfo, 0, 0, null));
             }
@@ -327,7 +327,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
             if (parsedMovieInfo != null)
             {
-                trackedDownload.SetMovie(downloadHistory is { EventType: DownloadHistoryEventType.DownloadImported, MovieId: > 0 }
+                trackedDownload.SetMovie(downloadHistory is { EventType: DownloadHistoryEventType.DownloadImported or DownloadHistoryEventType.FileImported, MovieId: > 0 }
                     ? _parsingService.Map(parsedMovieInfo, downloadHistory.MovieId)
                     : _parsingService.Map(parsedMovieInfo, "", 0, null));
             }
@@ -446,6 +446,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             switch (eventType)
             {
                 case DownloadHistoryEventType.DownloadImported:
+                case DownloadHistoryEventType.FileImported:
                     return TrackedDownloadState.Imported;
                 case DownloadHistoryEventType.DownloadFailed:
                     return TrackedDownloadState.Failed;

@@ -1,3 +1,7 @@
+import {
+  QueueTrackedDownloadState,
+  QueueTrackedDownloadStatus,
+} from 'typings/Queue';
 import translate from 'Utilities/String/translate';
 import { MediaHistoryItem, MediaQueueItem } from './mediaActivity';
 
@@ -61,8 +65,18 @@ const IMPORTING_STATES = new Set([
 export function getQueueStatusBadge(item: MediaQueueItem): StatusBadge {
   const { status: trackedStatus, state } = getTrackedDownload(item);
 
+  return getQueueStatusBadgeFromStatus(item.status, trackedStatus, state);
+}
+
+// Shared by Activity and episode views so the same queue tuple has one label
+// and tone regardless of where it is displayed.
+export function getQueueStatusBadgeFromStatus(
+  status: string,
+  trackedStatus?: QueueTrackedDownloadStatus,
+  state?: QueueTrackedDownloadState
+): StatusBadge {
   if (
-    item.status === 'failed' ||
+    status === 'failed' ||
     trackedStatus === 'error' ||
     state === 'failedPending' ||
     state === 'failed'
@@ -70,7 +84,7 @@ export function getQueueStatusBadge(item: MediaQueueItem): StatusBadge {
     return { label: translate('Failed'), kind: 'danger' };
   }
 
-  if (item.status === 'completed') {
+  if (status === 'completed') {
     switch (state) {
       case 'importBlocked':
         // Finished downloading, but Sonarr cannot import it on its own, so it
@@ -78,22 +92,37 @@ export function getQueueStatusBadge(item: MediaQueueItem): StatusBadge {
         return { label: translate('ManualImport'), kind: 'warning' };
 
       case 'importPending':
-        return { label: translate('WaitingToImport'), kind: 'purple' };
+        return {
+          label: translate('WaitingToImport'),
+          kind: trackedStatus === 'warning' ? 'warning' : 'purple',
+        };
 
       case 'importing':
-        return { label: translate('Importing'), kind: 'primary' };
+        return {
+          label: translate('Importing'),
+          kind: trackedStatus === 'warning' ? 'warning' : 'primary',
+        };
 
       default:
-        return { label: translate('Completed'), kind: 'success' };
+        return {
+          label: translate('Completed'),
+          kind: trackedStatus === 'warning' ? 'warning' : 'success',
+        };
     }
   }
 
-  switch (item.status) {
+  switch (status) {
     case 'downloading':
-      return { label: translate('Downloading'), kind: 'primary' };
+      return {
+        label: translate('Downloading'),
+        kind: trackedStatus === 'warning' ? 'warning' : 'primary',
+      };
 
     case 'queued':
-      return { label: translate('Queued'), kind: 'info' };
+      return {
+        label: translate('Queued'),
+        kind: trackedStatus === 'warning' ? 'warning' : 'info',
+      };
 
     case 'paused':
       return { label: translate('Paused'), kind: 'warning' };
@@ -106,7 +135,10 @@ export function getQueueStatusBadge(item: MediaQueueItem): StatusBadge {
       return { label: translate('Warning'), kind: 'warning' };
 
     default:
-      return { label: item.status, kind: 'default' };
+      return {
+        label: status,
+        kind: trackedStatus === 'warning' ? 'warning' : 'default',
+      };
   }
 }
 

@@ -21,6 +21,7 @@ namespace NzbDrone.Core.History
         {
             Data = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             MediaType = NzbDrone.Core.ImportLists.MediaType.Movie;
+            EventType = MovieHistoryEventType.Unknown;
         }
 
         public int MovieId { get; set; }
@@ -41,17 +42,14 @@ namespace NzbDrone.Core.History
 
     public enum MovieHistoryEventType
     {
-        Unknown = 0,
-        Grabbed = 1,
-
-        // SeriesFolderImported = 2, // deprecated
-        DownloadFolderImported = 3,
-        DownloadFailed = 4,
-
-        // EpisodeFileDeleted = 5, // deprecated
-        MovieFileDeleted = 6,
-        MovieFolderImported = 7, // not used yet
-        MovieFileRenamed = 8,
-        DownloadIgnored = 9
+        // History is shared with episodes; movie values occupy a separate range.
+        Unknown = 100,
+        Grabbed = 101,
+        DownloadFolderImported = 103,
+        DownloadFailed = 104,
+        MovieFileDeleted = 106,
+        MovieFolderImported = 107,
+        MovieFileRenamed = 108,
+        DownloadIgnored = 109
     }
 }

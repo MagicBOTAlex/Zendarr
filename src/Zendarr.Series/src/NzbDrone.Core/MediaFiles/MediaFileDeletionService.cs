@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
@@ -62,6 +64,13 @@ namespace NzbDrone.Core.MediaFiles
         public void DeleteEpisodeFile(Series series, EpisodeFile episodeFile)
         {
             var fullPath = Path.Combine(series.Path, episodeFile.RelativePath);
+
+            if (HasSharedPath(series, episodeFile))
+            {
+                _logger.Warn("Refusing to delete episode file {0}: another episode file references the same path", fullPath);
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Another episode file references the same path: {0}", fullPath);
+            }
+
             var rootFolder = _rootFolderService.GetBestRootFolderPath(series.Path);
 
             if (!_diskProvider.FolderExists(rootFolder))
@@ -143,6 +152,13 @@ namespace NzbDrone.Core.MediaFiles
                     {
                         var fullPath = Path.Combine(series.Path, episodeFile.RelativePath);
 
+                        if (HasSharedPath(series, episodeFile))
+                        {
+                            _logger.Warn("Refusing to delete episode file {0}: another episode file references the same path", fullPath);
+                            _commandResultReporter.Report(CommandResult.Indeterminate);
+                            continue;
+                        }
+
                         if (_diskProvider.FileExists(fullPath))
                         {
                             _logger.Info("Deleting episode file: {0}", fullPath);
@@ -172,6 +188,14 @@ namespace NzbDrone.Core.MediaFiles
                     _commandResultReporter.Report(CommandResult.Indeterminate);
                 }
             }
+        }
+
+        private bool HasSharedPath(Series series, EpisodeFile episodeFile)
+        {
+            var fullPath = Path.Combine(series.Path, episodeFile.RelativePath);
+            return _mediaFileService.GetFilesBySeries(series.Id)
+                .Any(other => other.Id != episodeFile.Id &&
+                              PathEqualityComparer.Instance.Equals(fullPath, Path.Combine(series.Path, other.RelativePath)));
         }
 
         public void HandleAsync(SeriesDeletedEvent message)

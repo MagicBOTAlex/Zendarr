@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Messaging.Events;
@@ -135,27 +134,6 @@ namespace NzbDrone.Core.Indexers
 
                 yield return indexer;
             }
-        }
-
-        public override ValidationResult Test(IndexerDefinition definition)
-        {
-            var result = base.Test(definition);
-
-            if (definition.Id == 0)
-            {
-                return result;
-            }
-
-            if (result == null || result.IsValid)
-            {
-                _indexerStatusService.RecordSuccess(definition.Id);
-            }
-            else
-            {
-                _indexerStatusService.RecordFailure(definition.Id);
-            }
-
-            return result;
         }
     }
 }

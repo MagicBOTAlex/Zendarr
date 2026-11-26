@@ -203,10 +203,34 @@ namespace NzbDrone.Core.Download
 
         public void Import(TrackedDownload trackedDownload)
         {
+            try
+            {
+                ImportInternal(trackedDownload);
+            }
+            catch (Exception)
+            {
+                // Do not leave an interrupted import in a state that has no consumer.
+                // Preserve terminal states if verification completed before an event failed.
+                if (trackedDownload.State == TrackedDownloadState.ImportPending ||
+                    trackedDownload.State == TrackedDownloadState.Importing)
+                {
+                    trackedDownload.ImportAttempts++;
+                    trackedDownload.Warn("Import failed unexpectedly. Check the logs for details.");
+                    SetImportBlocked(trackedDownload);
+                }
+
+                throw;
+            }
+        }
+
+        private void ImportInternal(TrackedDownload trackedDownload)
+        {
             SetImportItem(trackedDownload);
 
             if (!ValidatePath(trackedDownload))
             {
+                trackedDownload.ImportAttempts++;
+                SetImportBlocked(trackedDownload);
                 return;
             }
 
@@ -516,6 +540,18 @@ namespace NzbDrone.Core.Download
                 var manualInteractionEvent = new ManualInteractionRequiredEvent(trackedDownload, releaseInfo);
 
                 _eventAggregator.PublishEvent(manualInteractionEvent);
+            }
+        }
+
+        private void SetImportBlocked(TrackedDownload trackedDownload)
+        {
+            if (trackedDownload.RemoteMovie != null)
+            {
+                SetStateToImportBlockedMovie(trackedDownload);
+            }
+            else
+            {
+                SetStateToImportBlocked(trackedDownload);
             }
         }
 

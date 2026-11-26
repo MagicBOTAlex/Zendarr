@@ -1,15 +1,18 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Dapper;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.MediaFiles.MediaInfo;
@@ -73,6 +76,7 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
         private readonly SemaphoreSlim _wake = new SemaphoreSlim(0, 1);
 
         private readonly ITranscodeJobRepository _repository;
+        private readonly IMainDatabase _database;
         private readonly IConfigService _configService;
         private readonly IAppFolderInfo _appFolderInfo;
         private readonly IDiskProvider _diskProvider;
@@ -91,6 +95,7 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
         private DateTime _lastReconcileUtc = DateTime.MinValue;
 
         public TranscodeService(ITranscodeJobRepository repository,
+                                IMainDatabase database,
                                 IConfigService configService,
                                 IAppFolderInfo appFolderInfo,
                                 IDiskProvider diskProvider,
@@ -106,6 +111,7 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                                 Logger logger)
         {
             _repository = repository;
+            _database = database;
             _configService = configService;
             _appFolderInfo = appFolderInfo;
             _diskProvider = diskProvider;
@@ -321,11 +327,12 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
         {
             lock (GetResolveLock(jobId))
             {
-                var discarded = LoadReviewable(jobId);
-                DeleteQuietly(discarded.OutputPath);
-                Complete(discarded);
-
-                return discarded;
+                lock (GetTransitionLock(jobId))
+                {
+                    var discarded = LoadReviewable(jobId);
+                    Finish(discarded, TranscodeJobStatus.Cancelled, message: "Transcoded output discarded");
+                    return discarded;
+                }
             }
         }
 
@@ -337,6 +344,7 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
         private TransferClaim ClaimTransfer(int jobId)
         {
             lock (GetResolveLock(jobId))
+            lock (GetTransitionLock(jobId))
             {
                 var job = LoadReviewable(jobId);
 
@@ -428,58 +436,65 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             // job id (the encode worker has already released it) so CancelJob can abort the copy.
             var transferCancellation = new CancellationTokenSource();
 
-            lock (_activeLock)
+            lock (GetTransitionLock(job.Id))
             {
-                _cancellations[job.Id] = transferCancellation;
+                if (_repository.Find(job.Id)?.Status != TranscodeJobStatus.Transferring)
+                {
+                    transferCancellation.Dispose();
+                    throw new OperationCanceledException("Transcode transfer was cancelled before it started");
+                }
+
+                lock (_activeLock)
+                {
+                    _cancellations[job.Id] = transferCancellation;
+                }
             }
 
             try
             {
                 TransferOutput(job, claim.Staging, claim.OutputSize, transferCancellation.Token);
 
-                if (transferCancellation.IsCancellationRequested)
+                lock (GetTransitionLock(job.Id))
                 {
-                    throw new OperationCanceledException();
-                }
-
-                if (action == TranscodeReviewAction.KeepBoth)
-                {
-                    if (string.Equals(claim.Destination, job.SourcePath, PathComparison))
+                    if (transferCancellation.IsCancellationRequested || _repository.Find(job.Id)?.Status != TranscodeJobStatus.Transferring)
                     {
-                        var original = GetKeepBothPath(job.SourcePath);
-                        _diskTransferService.TransferFile(job.SourcePath, original, TransferMode.Move);
-                        job.OriginalPath = original;
+                        throw new OperationCanceledException();
+                    }
+
+                    if (action == TranscodeReviewAction.KeepBoth)
+                    {
+                        if (string.Equals(claim.Destination, job.SourcePath, PathComparison))
+                        {
+                            var original = GetKeepBothPath(job.SourcePath);
+                            _diskTransferService.TransferFile(job.SourcePath, original, TransferMode.Move);
+                            job.OriginalPath = original;
+                        }
+                        else
+                        {
+                            // A tagged/renamed output lands beside the untouched original, so there is no
+                            // collision to resolve.
+                            job.OriginalPath = job.SourcePath;
+                        }
+
+                        _diskTransferService.TransferFile(claim.Staging, claim.Destination, TransferMode.Move, overwrite: true);
                     }
                     else
                     {
-                        // A tagged/renamed output lands beside the untouched original, so there is no
-                        // collision to resolve.
-                        job.OriginalPath = job.SourcePath;
+                        ReplaceOriginal(claim, job);
                     }
 
-                    _diskTransferService.TransferFile(claim.Staging, claim.Destination, TransferMode.Move, overwrite: true);
-                }
-                else
-                {
-                    ReplaceOriginal(claim, job);
+                    job.Progress = 100;
+                    job.Error = null;
+                    Complete(job, claim.Destination);
                 }
             }
             catch (OperationCanceledException)
             {
-                // The user aborted the copy: drop the partial staging file but keep the finished
-                // output so the job can simply be resolved (or discarded) again.
+                // The cancelled job is durable; remove the partial staging file and output.
                 DeleteQuietly(claim.Staging);
 
-                lock (GetResolveLock(job.Id))
-                {
-                    job.Status = TranscodeJobStatus.AwaitingReview;
-                    job.Progress = 100;
-                    job.Speed = null;
-                    job.Error = "Transfer cancelled; the transcoded output was kept for review";
-                    job.LastUpdatedAt = DateTime.UtcNow;
-                    Persist(job);
-                    Publish(job);
-                }
+                // Cancellation was persisted before the token was signalled. Do not restore review.
+                CleanupJobFolder(job.Id);
 
                 throw;
             }
@@ -487,16 +502,23 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             {
                 DeleteQuietly(claim.Staging);
 
-                lock (GetResolveLock(job.Id))
+                lock (GetTransitionLock(job.Id))
                 {
-                    // The source output is kept so the job can simply be resolved again.
-                    job.Status = TranscodeJobStatus.AwaitingReview;
-                    job.Progress = 100;
-                    job.Speed = null;
-                    job.Error = ex.Message;
-                    job.LastUpdatedAt = DateTime.UtcNow;
-                    Persist(job);
-                    Publish(job);
+                    var persisted = _repository.Find(job.Id);
+                    if (persisted != null && persisted.Status == TranscodeJobStatus.Transferring)
+                    {
+                        job.Status = TranscodeJobStatus.AwaitingReview;
+                        job.Progress = 100;
+                        job.Speed = null;
+                        job.Error = ex.Message;
+                        job.LastUpdatedAt = DateTime.UtcNow;
+                        if (!TryPersistRequired(job))
+                        {
+                            throw new InvalidOperationException($"Unable to persist review state for transcode job {job.Id}", ex);
+                        }
+
+                        Publish(job);
+                    }
                 }
 
                 throw;
@@ -509,18 +531,6 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                 }
 
                 transferCancellation.Dispose();
-            }
-
-            // Phase 3: the terminal transition is gated again so a second resolve cannot finalize
-            // the same job twice (it would have been rejected as Transferring during phase 2).
-            lock (GetResolveLock(job.Id))
-            {
-                job.Progress = 100;
-                job.Error = null;
-
-                UpdateLibraryFile(job, claim.Destination);
-
-                Complete(job);
             }
 
             return job;
@@ -689,7 +699,7 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                                         // Transferring and a terminal row's progress is never lowered.
                                         lock (GetTransitionLock(job.Id))
                                         {
-                                            if (job.Status != TranscodeJobStatus.Transferring)
+                                            if (_repository.Find(job.Id)?.Status != TranscodeJobStatus.Transferring)
                                             {
                                                 return;
                                             }
@@ -892,46 +902,50 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
 
         public CancelJobResult CancelJob(int jobId)
         {
-            // Take the same per-job gate as the Queued->Running claim so the two cannot interleave:
-            // a cancel either wins (and the claim re-reads Cancelled) or observes the registered CTS
-            // and cancels the encode. A lock is never held across the encode itself.
             lock (GetTransitionLock(jobId))
             {
-                // The lookup and the cancel share _activeLock with the worker's teardown, which
-                // removes and disposes the source under the same lock: the source can never be
-                // disposed between reading it and cancelling it. The ObjectDisposedException guard
-                // is belt-and-braces for a source disposed by any other path.
-                lock (_activeLock)
-                {
-                    if (_cancellations.TryGetValue(jobId, out var cancellation))
-                    {
-                        try
-                        {
-                            cancellation.Cancel();
-                        }
-                        catch (ObjectDisposedException)
-                        {
-                        }
-
-                        // A live encode or transfer is being aborted; its worker flips the row to
-                        // Cancelled (or back to review) once it observes the token.
-                        return CancelJobResult.Cancelled;
-                    }
-                }
-
                 var job = _repository.Find(jobId);
-
                 if (job == null)
                 {
                     return CancelJobResult.NotFound;
                 }
 
-                if (job.Status != TranscodeJobStatus.Queued)
+                if (job.Status != TranscodeJobStatus.Queued && job.Status != TranscodeJobStatus.Running &&
+                    job.Status != TranscodeJobStatus.Transferring && job.Status != TranscodeJobStatus.AwaitingReview)
                 {
                     return CancelJobResult.NotCancellable;
                 }
 
-                Finish(job, TranscodeJobStatus.Cancelled);
+                // Persist before signalling: a crash or slow worker cannot resurrect the job.
+                job.Status = TranscodeJobStatus.Cancelled;
+                job.EndedAt = DateTime.UtcNow;
+                job.LastUpdatedAt = DateTime.UtcNow;
+                job.Speed = null;
+                job.Fps = null;
+                job.Eta = null;
+                job.OutputPath = null;
+                job.OutputSize = null;
+                if (!TryPersistRequired(job))
+                {
+                    throw new InvalidOperationException($"Unable to persist cancellation of transcode job {jobId}");
+                }
+
+                Publish(job);
+                var owned = false;
+                lock (_activeLock)
+                {
+                    if (_cancellations.TryGetValue(jobId, out var cancellation))
+                    {
+                        owned = true;
+                        cancellation.Cancel();
+                    }
+                }
+
+                ClearScheduleFailures(jobId);
+                if (!owned)
+                {
+                    CleanupJobFolder(jobId);
+                }
 
                 return CancelJobResult.Cancelled;
             }
@@ -1128,6 +1142,13 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                     return;
                 }
 
+                var persisted = _repository.Find(job.Id);
+                if (persisted == null || persisted.Status != TranscodeJobStatus.Running)
+                {
+                    CleanupJobFolder(job.Id);
+                    return;
+                }
+
                 job.Status = TranscodeJobStatus.AwaitingReview;
                 job.OutputPath = result.OutputPath;
                 job.OutputSize = result.OutputSize;
@@ -1135,7 +1156,11 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                 job.Error = null;
                 job.EndedAt = DateTime.UtcNow;
                 job.LastUpdatedAt = DateTime.UtcNow;
-                Persist(job);
+                if (!TryPersistRequired(job))
+                {
+                    throw new InvalidOperationException($"Unable to persist review state for transcode job {job.Id}");
+                }
+
                 Publish(job);
             }
         }
@@ -1276,6 +1301,18 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                     }
                     finally
                     {
+                        try
+                        {
+                            if (_repository.Find(scheduled.Id)?.Status == TranscodeJobStatus.Cancelled)
+                            {
+                                CleanupJobFolder(scheduled.Id);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Warn(ex, "Unable to check cancellation cleanup for job {0}", scheduled.Id);
+                        }
+
                         // Remove and dispose under the same lock CancelJob uses to look up and
                         // cancel the source, so a concurrent cancel cannot hit a disposed token.
                         lock (_activeLock)
@@ -1995,48 +2032,14 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
 
         private void RecoverRunningJob(TranscodeJob job)
         {
-            _logger.Warn("Marking interrupted transcode job {0} as failed (original untouched)", job.Id);
-
-            job.Status = TranscodeJobStatus.Failed;
-            job.Error = "Interrupted by a restart";
-            job.EndedAt = DateTime.UtcNow;
-            job.LastUpdatedAt = DateTime.UtcNow;
-
-            // Only discard the working folder once the failure is durable, so a failed write cannot
-            // delete the output while the row still reads Running.
-            if (TryPersistRequired(job))
+            lock (GetTransitionLock(job.Id))
             {
-                CleanupJobFolder(job.Id);
-            }
-        }
+                job = _repository.Find(job.Id);
+                if (job == null || job.Status != TranscodeJobStatus.Running)
+                {
+                    return;
+                }
 
-        private void RecoverTransferringJob(TranscodeJob job)
-        {
-            // The encode had finished; only the copy into the library was interrupted. Drop the
-            // partial staging file and, if the finished output survived, return the job to review
-            // so it can be resolved again without re-encoding. The isolation wrapper catches a
-            // hostile destination (GetDestinationPath can throw) so the loop keeps going.
-            try
-            {
-                DeleteQuietly(GetStagingPath(GetDestinationPath(job), job.Id));
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn(ex, "Unable to clean the staging file for interrupted transcode job {0}", job.Id);
-            }
-
-            if (job.OutputPath.IsNotNullOrWhiteSpace() && _diskProvider.FileExists(job.OutputPath))
-            {
-                _logger.Warn("Returning interrupted transfer for job {0} to review (finished output kept)", job.Id);
-
-                job.Status = TranscodeJobStatus.AwaitingReview;
-                job.Progress = 100;
-                job.Error = "Transfer interrupted by a restart";
-                job.LastUpdatedAt = DateTime.UtcNow;
-                TryPersistRequired(job);
-            }
-            else
-            {
                 _logger.Warn("Marking interrupted transcode job {0} as failed (original untouched)", job.Id);
 
                 job.Status = TranscodeJobStatus.Failed;
@@ -2044,6 +2047,8 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                 job.EndedAt = DateTime.UtcNow;
                 job.LastUpdatedAt = DateTime.UtcNow;
 
+                // Only discard the working folder once the failure is durable, so a failed write cannot
+                // delete the output while the row still reads Running.
                 if (TryPersistRequired(job))
                 {
                     CleanupJobFolder(job.Id);
@@ -2051,69 +2056,112 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             }
         }
 
-        private void Complete(TranscodeJob job)
+        private void RecoverTransferringJob(TranscodeJob job)
         {
-            // Serialize the terminal write with the transfer watcher's guarded progress write (and
-            // the cancel/finish transitions), so a late watcher can never lower the progress of the
-            // completed row.
             lock (GetTransitionLock(job.Id))
             {
-                job.Status = TranscodeJobStatus.Completed;
-                job.EndedAt = DateTime.UtcNow;
-                job.LastUpdatedAt = DateTime.UtcNow;
-
-                // The completion is the durable record that the output was placed; never swallow a
-                // failed write (the caller surfaces the error and the resolve can be retried).
-                if (!TryPersistRequired(job))
+                job = _repository.Find(job.Id);
+                if (job == null || job.Status != TranscodeJobStatus.Transferring)
                 {
-                    throw new InvalidOperationException($"Unable to persist the completion of transcode job {job.Id}");
+                    return;
                 }
 
-                Publish(job);
-            }
+                // The encode had finished; only the copy into the library was interrupted. Drop the
+                // partial staging file and, if the finished output survived, return the job to review
+                // so it can be resolved again without re-encoding. The isolation wrapper catches a
+                // hostile destination (GetDestinationPath can throw) so the loop keeps going.
+                try
+                {
+                    DeleteQuietly(GetStagingPath(GetDestinationPath(job), job.Id));
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Unable to clean the staging file for interrupted transcode job {0}", job.Id);
+                }
 
-            ClearScheduleFailures(job.Id);
-            CleanupJobFolder(job.Id);
+                if (job.OutputPath.IsNotNullOrWhiteSpace() && _diskProvider.FileExists(job.OutputPath))
+                {
+                    _logger.Warn("Returning interrupted transfer for job {0} to review (finished output kept)", job.Id);
+
+                    job.Status = TranscodeJobStatus.AwaitingReview;
+                    job.Progress = 100;
+                    job.Error = "Transfer interrupted by a restart";
+                    job.LastUpdatedAt = DateTime.UtcNow;
+                    TryPersistRequired(job);
+                }
+                else
+                {
+                    _logger.Warn("Marking interrupted transcode job {0} as failed (original untouched)", job.Id);
+
+                    job.Status = TranscodeJobStatus.Failed;
+                    job.Error = "Interrupted by a restart";
+                    job.EndedAt = DateTime.UtcNow;
+                    job.LastUpdatedAt = DateTime.UtcNow;
+
+                    if (TryPersistRequired(job))
+                    {
+                        CleanupJobFolder(job.Id);
+                    }
+                }
+            }
         }
 
-        private void UpdateLibraryFile(TranscodeJob job, string path)
+        // The metadata row and terminal job write must share one database transaction. Filesystem
+        // placement is not transactional; a failure here leaves the output for recovery/retry.
+        private void Complete(TranscodeJob job, string path)
         {
-            try
+            var mediaInfo = _videoFileInfoReader.GetMediaInfo(path);
+            var size = _diskProvider.GetFileSize(path);
+            string table;
+            int fileId;
+            string relativePath;
+
+            if (job.MediaType == MediaType.Series && job.EpisodeFileId.HasValue)
             {
-                var mediaInfo = _videoFileInfoReader.GetMediaInfo(path);
-                var size = _diskProvider.GetFileSize(path);
-
-                if (job.MediaType == MediaType.Series && job.EpisodeFileId.HasValue)
-                {
-                    var file = _mediaFileService.Get(job.EpisodeFileId.Value);
-
-                    if (file != null)
-                    {
-                        file.Size = size;
-                        file.MediaInfo = mediaInfo;
-                        file.OriginalFilePath = path;
-                        file.RelativePath = GetUpdatedRelativePath(file.RelativePath, path);
-                        _mediaFileService.Update(file);
-                    }
-                }
-                else if (job.MediaType == MediaType.Movie && job.MovieFileId.HasValue)
-                {
-                    var file = _movieFileService.GetMovie(job.MovieFileId.Value);
-
-                    if (file != null)
-                    {
-                        file.Size = size;
-                        file.MediaInfo = mediaInfo;
-                        file.OriginalFilePath = path;
-                        file.RelativePath = GetUpdatedRelativePath(file.RelativePath, path);
-                        _movieFileService.Update(file);
-                    }
-                }
+                var file = _mediaFileService.Get(job.EpisodeFileId.Value) ?? throw new InvalidOperationException("Episode file no longer exists");
+                table = "EpisodeFiles";
+                fileId = file.Id;
+                relativePath = GetUpdatedRelativePath(file.RelativePath, path);
             }
-            catch (Exception ex)
+            else if (job.MediaType == MediaType.Movie && job.MovieFileId.HasValue)
             {
-                _logger.Error(ex, "Unable to refresh library metadata after resolving transcode job {0}", job.Id);
+                var file = _movieFileService.GetMovie(job.MovieFileId.Value) ?? throw new InvalidOperationException("Movie file no longer exists");
+                table = "MovieFiles";
+                fileId = file.Id;
+                relativePath = GetUpdatedRelativePath(file.RelativePath, path);
             }
+            else
+            {
+                throw new InvalidOperationException("Transcode job has no library file");
+            }
+
+            var now = DateTime.UtcNow;
+            using (var connection = _database.OpenConnection())
+            using (var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted))
+            {
+                var updated = connection.Execute($"UPDATE \"{table}\" SET \"Size\" = @size, \"MediaInfo\" = @mediaInfo, \"OriginalFilePath\" = @path, \"RelativePath\" = @relativePath WHERE \"Id\" = @fileId",
+                    new { size, mediaInfo, path, relativePath, fileId }, transaction);
+                if (updated != 1)
+                {
+                    throw new InvalidOperationException("Library file no longer exists");
+                }
+
+                updated = connection.Execute("UPDATE \"TranscodeJobs\" SET \"Status\" = @status, \"Progress\" = @progress, \"Error\" = NULL, \"OriginalPath\" = @originalPath, \"EndedAt\" = @now, \"LastUpdatedAt\" = @now WHERE \"Id\" = @id AND \"Status\" = @transferring",
+                    new { status = (int)TranscodeJobStatus.Completed, progress = 100, originalPath = job.OriginalPath, now, id = job.Id, transferring = (int)TranscodeJobStatus.Transferring }, transaction);
+                if (updated != 1)
+                {
+                    throw new InvalidOperationException($"Transcode job {job.Id} is no longer transferring");
+                }
+
+                transaction.Commit();
+            }
+
+            job.Status = TranscodeJobStatus.Completed;
+            job.EndedAt = now;
+            job.LastUpdatedAt = now;
+            Publish(job);
+            ClearScheduleFailures(job.Id);
+            CleanupJobFolder(job.Id);
         }
 
         // Keeps the directory of the existing library-relative path but adopts the new (possibly
@@ -2207,9 +2255,15 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                 // Never overwrite a row that already reached a terminal state: a cancel that won
                 // the race against a scheduler fail (or a duplicate finish) must keep its result.
                 // Legitimate Queued/Running -> Failed/Cancelled/Skipped writes still proceed.
-                if (persisted != null && IsTerminalStatus(persisted.Status))
+                if (persisted == null || (persisted.IsTerminal() &&
+                    !(persisted.Status == TranscodeJobStatus.AwaitingReview && status == TranscodeJobStatus.Cancelled)))
                 {
                     ClearScheduleFailures(job.Id);
+                    if (persisted?.Status == TranscodeJobStatus.Cancelled)
+                    {
+                        CleanupJobFolder(job.Id);
+                    }
+
                     return;
                 }
 
@@ -2252,14 +2306,6 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             {
                 CleanupJobFolder(job.Id);
             }
-        }
-
-        private static bool IsTerminalStatus(TranscodeJobStatus status)
-        {
-            return status == TranscodeJobStatus.Completed ||
-                   status == TranscodeJobStatus.Failed ||
-                   status == TranscodeJobStatus.Cancelled ||
-                   status == TranscodeJobStatus.Skipped;
         }
 
         private void Persist(TranscodeJob job)
