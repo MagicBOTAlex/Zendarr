@@ -6,6 +6,7 @@ using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.History;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
@@ -35,6 +36,7 @@ namespace Sonarr.Api.V5.Queue
         private readonly IIgnoredDownloadService _ignoredDownloadService;
         private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly IBlocklistService _blocklistService;
+        private readonly IDownloadHistoryService _downloadHistoryService;
         private readonly ISubsystemAccessor _subsystemAccessor;
 
         public QueueController(IBroadcastSignalRMessage broadcastSignalRMessage,
@@ -46,6 +48,7 @@ namespace Sonarr.Api.V5.Queue
                            IIgnoredDownloadService ignoredDownloadService,
                            IProvideDownloadClient downloadClientProvider,
                            IBlocklistService blocklistService,
+                           IDownloadHistoryService downloadHistoryService,
                            ISubsystemAccessor subsystemAccessor)
             : base(broadcastSignalRMessage)
         {
@@ -57,6 +60,7 @@ namespace Sonarr.Api.V5.Queue
             _ignoredDownloadService = ignoredDownloadService;
             _downloadClientProvider = downloadClientProvider;
             _blocklistService = blocklistService;
+            _downloadHistoryService = downloadHistoryService;
             _subsystemAccessor = subsystemAccessor;
         }
 
@@ -369,6 +373,20 @@ namespace Sonarr.Api.V5.Queue
             if (blocklist)
             {
                 _failedDownloadService.MarkAsFailed(trackedDownload, message, Request.GetSource(), skipRedownload);
+            }
+            else if (removeFromClient)
+            {
+                // Removing from the client stops tracking without writing a failed/ignored/
+                // imported event. Record a terminal "ignored" event so the durable
+                // "already grabbed" guard stops treating this grab as in progress.
+                _downloadHistoryService.RecordRemovedDownload(trackedDownload);
+            }
+            else if (changeCategory)
+            {
+                // A category change re-files the item inside the client (MarkItemAsImported)
+                // instead of throwing it away, so record the terminal hand-off as an import,
+                // not as "ignored".
+                _downloadHistoryService.RecordCategoryChangedDownload(trackedDownload);
             }
 
             if (!removeFromClient && !blocklist && !changeCategory)

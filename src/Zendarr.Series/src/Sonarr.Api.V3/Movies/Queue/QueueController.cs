@@ -350,12 +350,19 @@ namespace Sonarr.Api.V3.Movies.Queue
             {
                 _failedDownloadService.MarkAsFailed(trackedDownload, null, null, skipRedownload);
             }
-            else if (removeFromClient || changeCategory)
+            else if (removeFromClient)
             {
-                // Removing from the client or changing its category stops tracking without
-                // writing a failed/ignored/imported event. Record a terminal event so the
-                // durable "already grabbed" guard stops treating this grab as in progress.
+                // Removing from the client stops tracking without writing a failed/ignored/
+                // imported event. Record a terminal "ignored" event so the durable
+                // "already grabbed" guard stops treating this grab as in progress.
                 _downloadHistoryService.RecordRemovedDownload(trackedDownload);
+            }
+            else if (changeCategory)
+            {
+                // A category change re-files the item inside the client (MarkItemAsImported)
+                // instead of throwing it away, so record the terminal hand-off as an import,
+                // not as "ignored".
+                _downloadHistoryService.RecordCategoryChangedDownload(trackedDownload);
             }
 
             if (!removeFromClient && !blocklist && !changeCategory)

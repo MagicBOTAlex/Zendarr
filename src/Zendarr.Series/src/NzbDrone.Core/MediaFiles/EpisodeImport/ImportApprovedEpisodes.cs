@@ -165,10 +165,13 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
                                 _eventAggregator.PublishEvent(new EpisodeFileAddedEvent(existingFile));
                             }
 
-                            // Keep the decision reported as skipped (same as the
-                            // DestinationAlreadyExists handler); only the fileless episodes are
-                            // reconciled here.
-                            importResults.Add(new ImportResult(importDecision, "An episode file already exists at the destination path"));
+                            // Report the decision as imported for the existing file. Its episodes
+                            // now live on that file, so VerifyImport must be able to count them or
+                            // the completed download would be blocked even though every episode is
+                            // imported. Only this decision's own episodes are carried in the
+                            // result, so a failed decision elsewhere still contributes nothing and
+                            // cannot be masked by this one.
+                            importResults.Add(new ImportResult(importDecision, existingFile));
                             continue;
                         }
                     }

@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
@@ -5,6 +6,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Queue;
 using Sonarr.Http;
 using Sonarr.Http.REST;
@@ -76,13 +78,23 @@ namespace Sonarr.Api.V5.Queue
 
         private async Task GrabPendingRelease(NzbDrone.Core.Queue.Queue pendingRelease)
         {
-            if (pendingRelease.RemoteMovie != null)
+            try
             {
-                await _downloadService.DownloadReport(pendingRelease.RemoteMovie, null);
+                if (pendingRelease.RemoteMovie != null)
+                {
+                    await _downloadService.DownloadReport(pendingRelease.RemoteMovie, null);
+                }
+                else
+                {
+                    await _downloadService.DownloadReport(pendingRelease.RemoteEpisode, null);
+                }
             }
-            else
+            catch (ReleaseBlockedException ex)
             {
-                await _downloadService.DownloadReport(pendingRelease.RemoteEpisode, null);
+                // A pending grab runs the same durable release guards as DownloadReport, and a
+                // blocked release is a client-visible refusal, not a server error. Mirror the
+                // release endpoint and answer 409 with the guard's reason.
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, ex.Message);
             }
         }
 

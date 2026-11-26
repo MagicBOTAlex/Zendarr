@@ -91,6 +91,66 @@ namespace NzbDrone.Core.Test.Download.FailedDownloadServiceTests
         }
 
         [Test]
+        public void should_fail_an_encrypted_warning_download_when_still_unhandled_after_max_attempts()
+        {
+            // A client can report Warning for an encrypted download. It is failed handling's
+            // business, so it must be counted and terminate instead of staying in the queue.
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.IsEncrypted = true;
+            _trackedDownload.ImportAttempts = 2;
+            GivenNoGrabbedHistory();
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
+            _trackedDownload.ImportAttempts.Should().Be(3);
+            _trackedDownload.StatusMessages.Should().NotBeEmpty();
+        }
+
+        [Test]
+        public void should_fail_an_unfinished_warning_download_that_was_not_grabbed_after_max_attempts()
+        {
+            // Nothing else consumes a warned download that still has data outstanding and was not
+            // grabbed by the app (completed download handling only imports finished downloads).
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.RemainingSize = 1024;
+            _trackedDownload.ImportAttempts = 2;
+            GivenNoGrabbedHistory();
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
+            _trackedDownload.ImportAttempts.Should().Be(3);
+            _trackedDownload.StatusMessages.Should().NotBeEmpty();
+        }
+
+        [Test]
+        public void should_not_fail_an_unfinished_warning_download_that_was_grabbed()
+        {
+            // A warned download we grabbed is still downloading; the client may still finish it.
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.RemainingSize = 1024;
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.Downloading);
+            _trackedDownload.ImportAttempts.Should().Be(0);
+        }
+
+        [Test]
+        public void should_not_fail_a_finished_warning_download_here()
+        {
+            // A finished warning belongs to completed download handling, which retries the import.
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            GivenNoGrabbedHistory();
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.Downloading);
+            _trackedDownload.ImportAttempts.Should().Be(0);
+        }
+
+        [Test]
         public void should_not_warn_if_matching_history_is_not_found_and_not_failed()
         {
             _trackedDownload.DownloadItem.Status = DownloadItemStatus.Failed;

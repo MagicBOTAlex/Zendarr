@@ -362,6 +362,83 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
                   .Verify(v => v.Delete(It.IsAny<EpisodeFile>(), DeleteMediaFileReason.ManualOverride), Times.Once());
         }
 
+        private EpisodeFile GivenExistingEpisodeFileAtDestination(Episode episodeOnFile)
+        {
+            var existingFile = Builder<EpisodeFile>.CreateNew().Build();
+            existingFile.Episodes = new List<Episode> { episodeOnFile };
+
+            Mocker.GetMock<IMediaFileService>()
+                  .Setup(s => s.GetFilesWithRelativePath(It.IsAny<int>(), It.IsAny<string>()))
+                  .Returns(new List<EpisodeFile> { existingFile });
+
+            return existingFile;
+        }
+
+        [Test]
+        public void should_report_duplicate_destination_as_imported_for_its_own_episodes()
+        {
+            var decision = _approvedDecisions.First();
+            GivenNewDownload();
+
+            var otherEpisode = Builder<Episode>.CreateNew()
+                                               .With(e => e.Id = decision.LocalEpisode.Episodes.First().Id + 1000)
+                                               .Build();
+
+            var existingFile = GivenExistingEpisodeFileAtDestination(otherEpisode);
+
+            var result = Subject.Import(new List<ImportDecision> { decision }, true, _downloadClientItem);
+
+            result.Should().ContainSingle();
+            var importResult = result.Single();
+
+            importResult.Result.Should().Be(ImportResultType.Imported);
+            importResult.EpisodeFile.Should().Be(existingFile);
+
+            // This is the count VerifyImport uses to decide the download is complete: it must
+            // carry this decision's episodes, and only those, even though the file's episodes
+            // also include an episode from another decision.
+            result.Where(r => r.Result == ImportResultType.Imported)
+                  .SelectMany(r => r.ImportDecision.LocalEpisode.Episodes)
+                  .Should().BeEquivalentTo(decision.LocalEpisode.Episodes);
+
+            Mocker.GetMock<IMediaFileService>().Verify(v => v.Add(It.IsAny<EpisodeFile>()), Times.Never());
+
+            // The decision's episodes must actually be linked to the existing file for the
+            // Imported result to be truthful.
+            Mocker.GetMock<IEventAggregator>()
+                  .Verify(v => v.PublishEvent(It.Is<EpisodeFileAddedEvent>(e => e.EpisodeFile == existingFile)), Times.Once());
+        }
+
+        [Test]
+        public void should_not_mask_a_failed_decision_when_reporting_duplicate_destination_as_imported()
+        {
+            GivenNewDownload();
+
+            var duplicateDecision = _approvedDecisions[0];
+            var failingDecision = _approvedDecisions[1];
+
+            GivenExistingEpisodeFileAtDestination(Builder<Episode>.CreateNew()
+                                                          .With(e => e.Id = duplicateDecision.LocalEpisode.Episodes.First().Id + 1000)
+                                                          .Build());
+
+            Mocker.GetMock<IUpgradeMediaFiles>()
+                  .Setup(s => s.UpgradeEpisodeFile(It.IsAny<EpisodeFile>(), failingDecision.LocalEpisode, It.IsAny<bool>()))
+                  .Throws(new RootFolderNotFoundException("Missing root folder"));
+
+            var result = Subject.Import(new List<ImportDecision> { duplicateDecision, failingDecision }, true, _downloadClientItem);
+
+            result.Should().HaveCount(2);
+
+            var importedEpisodes = result.Where(r => r.Result == ImportResultType.Imported)
+                                         .SelectMany(r => r.ImportDecision.LocalEpisode.Episodes)
+                                         .ToList();
+
+            // The duplicate destination only reports its own decision's episode, so the failed
+            // decision still leaves the total short of what the download contains.
+            importedEpisodes.Should().BeEquivalentTo(duplicateDecision.LocalEpisode.Episodes);
+            result.Single(r => r.ImportDecision == failingDecision).Result.Should().Be(ImportResultType.Skipped);
+        }
+
         [Test]
         public void should_use_folder_info_release_title_to_find_relative_path_when_download_client_item_has_an_empty_output_path()
         {

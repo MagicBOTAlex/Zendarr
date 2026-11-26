@@ -4,6 +4,7 @@ using FluentAssertions;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
@@ -78,6 +79,13 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
                 .Returns(new List<EpisodeHistory>());
         }
 
+        private void GivenCompletedDownloadHandling(bool enabled = true)
+        {
+            Mocker.GetMock<IConfigService>()
+                  .SetupGet(s => s.EnableCompletedDownloadHandling)
+                  .Returns(enabled);
+        }
+
         private void GivenSeriesMatch()
         {
             Mocker.GetMock<IParsingService>()
@@ -109,7 +117,6 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
         [TestCase(DownloadItemStatus.Failed)]
         [TestCase(DownloadItemStatus.Queued)]
         [TestCase(DownloadItemStatus.Paused)]
-        [TestCase(DownloadItemStatus.Warning)]
         public void should_not_process_if_download_status_isnt_completed(DownloadItemStatus status)
         {
             _trackedDownload.DownloadItem.Status = status;
@@ -117,6 +124,81 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
             Subject.Check(_trackedDownload);
 
             AssertNotReadyToImport();
+        }
+
+        [Test]
+        public void should_process_a_finished_warned_download()
+        {
+            // A client reports Warning when the download finished but its post-processing failed.
+            // It must enter the normal import path instead of being skipped.
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.Category = "tv";
+            GivenCompletedDownloadHandling();
+
+            Subject.Check(_trackedDownload);
+
+            AssertReadyToImport();
+        }
+
+        [Test]
+        public void should_not_process_a_warned_download_that_is_still_downloading()
+        {
+            // A warning while data is still outstanding (e.g. a stalled torrent) belongs to the
+            // Downloading state; the files must not be imported yet.
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.RemainingSize = 1024;
+            _trackedDownload.DownloadItem.Category = "tv";
+            GivenCompletedDownloadHandling();
+
+            Subject.Check(_trackedDownload);
+
+            AssertNotReadyToImport();
+        }
+
+        [Test]
+        public void should_not_process_a_warned_download_when_completed_download_handling_is_disabled()
+        {
+            // ImportPending is only consumed with completed download handling enabled; without it
+            // the warned item must stay in its client state instead of a dead state.
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.Category = "tv";
+            GivenCompletedDownloadHandling(false);
+
+            Subject.Check(_trackedDownload);
+
+            AssertNotReadyToImport();
+            _trackedDownload.State.Should().Be(TrackedDownloadState.Downloading);
+        }
+
+        [Test]
+        public void should_fail_a_warned_download_when_it_still_cannot_be_imported_after_max_attempts()
+        {
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.Category = null;
+            _trackedDownload.ImportAttempts = 2;
+            GivenNoGrabbedHistory();
+            GivenCompletedDownloadHandling();
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
+            _trackedDownload.ImportAttempts.Should().Be(3);
+            _trackedDownload.StatusMessages.Should().NotBeEmpty();
+        }
+
+        [Test]
+        public void should_fail_a_warned_download_when_its_import_attempts_are_exhausted()
+        {
+            // The import path leaves other downloads in ImportBlocked for manual interaction, but a
+            // warned download must reach a terminal state once its budget is spent.
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.State = TrackedDownloadState.ImportBlocked;
+            _trackedDownload.ImportAttempts = 3;
+            GivenCompletedDownloadHandling();
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
         }
 
         [Test]
@@ -252,6 +334,13 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
                 .Returns(new List<MovieHistory>());
         }
 
+        private void GivenCompletedDownloadHandling(bool enabled = true)
+        {
+            Mocker.GetMock<IConfigService>()
+                  .SetupGet(s => s.EnableCompletedDownloadHandling)
+                  .Returns(enabled);
+        }
+
         private void GivenMovieMatch()
         {
             Mocker.GetMock<IParsingService>()
@@ -283,7 +372,6 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
         [TestCase(DownloadItemStatus.Failed)]
         [TestCase(DownloadItemStatus.Queued)]
         [TestCase(DownloadItemStatus.Paused)]
-        [TestCase(DownloadItemStatus.Warning)]
         public void should_not_process_movie_if_download_status_isnt_completed(DownloadItemStatus status)
         {
             _trackedDownload.DownloadItem.Status = status;
@@ -291,6 +379,47 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
             Subject.Check(_trackedDownload);
 
             AssertNotReadyToImport();
+        }
+
+        [Test]
+        public void should_process_a_finished_warned_movie_download()
+        {
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.Category = "movies";
+            GivenCompletedDownloadHandling();
+
+            Subject.Check(_trackedDownload);
+
+            AssertReadyToImport();
+        }
+
+        [Test]
+        public void should_not_process_a_warned_movie_download_that_is_still_downloading()
+        {
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.RemainingSize = 1024;
+            _trackedDownload.DownloadItem.Category = "movies";
+            GivenCompletedDownloadHandling();
+
+            Subject.Check(_trackedDownload);
+
+            AssertNotReadyToImport();
+        }
+
+        [Test]
+        public void should_fail_a_warned_movie_download_when_it_still_cannot_be_imported_after_max_attempts()
+        {
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Warning;
+            _trackedDownload.DownloadItem.Category = null;
+            _trackedDownload.ImportAttempts = 2;
+            GivenNoGrabbedHistory();
+            GivenCompletedDownloadHandling();
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
+            _trackedDownload.ImportAttempts.Should().Be(3);
+            _trackedDownload.StatusMessages.Should().NotBeEmpty();
         }
 
         [Test]

@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.AutoTagging;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
@@ -43,6 +45,7 @@ namespace NzbDrone.Core.Movies
         Movie UpdateMovie(Movie movie);
         List<Movie> UpdateMovie(List<Movie> movies, bool useExistingRelativeFolder);
         void UpdateLastSearchTime(Movie movie);
+        Movie RestoreMovie(int movieId, MovieStatusType status);
         List<int> GetRecommendedTmdbIds();
         bool MoviePathExists(string folder);
         void RemoveAddOptions(Movie movie);
@@ -55,6 +58,7 @@ namespace NzbDrone.Core.Movies
                                                IHandle<MovieFileDeletedEvent>
     {
         private readonly IMovieRepository _movieRepository;
+        private readonly IMovieMetadataRepository _movieMetadataRepository;
         private readonly IConfigService _configService;
         private readonly IEventAggregator _eventAggregator;
         private readonly IBuildMoviePaths _moviePathBuilder;
@@ -62,6 +66,7 @@ namespace NzbDrone.Core.Movies
         private readonly Logger _logger;
 
         public MovieService(IMovieRepository movieRepository,
+                            IMovieMetadataRepository movieMetadataRepository,
                             IEventAggregator eventAggregator,
                             IConfigService configService,
                             IBuildMoviePaths moviePathBuilder,
@@ -69,6 +74,7 @@ namespace NzbDrone.Core.Movies
                             Logger logger)
         {
             _movieRepository = movieRepository;
+            _movieMetadataRepository = movieMetadataRepository;
             _eventAggregator = eventAggregator;
             _configService = configService;
             _moviePathBuilder = moviePathBuilder;
@@ -287,6 +293,35 @@ namespace NzbDrone.Core.Movies
         public void UpdateLastSearchTime(Movie movie)
         {
             _movieRepository.SetFields(movie, e => e.LastSearchTime);
+        }
+
+        public Movie RestoreMovie(int movieId, MovieStatusType status)
+        {
+            // Explicit, user-initiated status change: un-delete a movie that was wrongly
+            // marked Deleted (for example by a transient TMDb 404) or correct a stale
+            // terminal status. The automatic refresh latch (RefreshMovieService) and the
+            // metadata upsert latch (MovieMetadataRepository.UpsertMany) are untouched;
+            // this write deliberately targets MovieMetadata.Status through a field update
+            // so it is not reverted by either latch. Deleted is rejected so this action can
+            // never be used to hide a movie - delete stays its own action.
+            if (status == MovieStatusType.Deleted || !Enum.IsDefined(status))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "'{0}' is not a valid status to restore a movie to", status);
+            }
+
+            var storedMovie = GetMovie(movieId);
+            var storedStatus = storedMovie.MovieMetadata.Value.Status;
+            var movieMetadata = storedMovie.MovieMetadata.Value;
+
+            movieMetadata.Status = status;
+            _movieMetadataRepository.SetFields(movieMetadata, m => m.Status);
+
+            var updatedMovie = GetMovie(movieId);
+
+            _logger.Info("Movie '{0}' status restored from {1} to {2}", updatedMovie.Title, storedStatus, updatedMovie.MovieMetadata.Value.Status);
+            _eventAggregator.PublishEvent(new MovieUpdatedEvent(updatedMovie));
+
+            return updatedMovie;
         }
 
         public bool MoviePathExists(string folder)

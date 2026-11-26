@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -6,6 +7,7 @@ using NLog;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.ImportLists;
@@ -32,7 +34,16 @@ namespace NzbDrone.Core.Download
     {
         private const int MaxImportAttempts = 3;
 
+        // An ImportBlocked download is waiting for a human, not for another automatic retry.
+        // Three one-minute refreshes (~3 minutes) is not a window anyone can act in, and failing
+        // the item then blocklists a healthy release and triggers a replacement search. Give a
+        // manual-interaction download a real, time-based window instead; only the automatic
+        // paths that never reach ImportBlocked keep the 3-attempt budget.
+        private static readonly TimeSpan ManualInteractionWindow = TimeSpan.FromHours(24);
+
+        private readonly ConcurrentDictionary<string, DateTime> _manualInteractionStarted = new ConcurrentDictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
         private readonly IEventAggregator _eventAggregator;
+        private readonly IConfigService _configService;
         private readonly IHistoryService _historyService;
         private readonly IProvideImportItemService _provideImportItemService;
         private readonly IDownloadedEpisodesImportService _downloadedEpisodesImportService;
@@ -47,6 +58,7 @@ namespace NzbDrone.Core.Download
         private readonly Logger _logger;
 
         public CompletedDownloadService(IEventAggregator eventAggregator,
+                                        IConfigService configService,
                                         IHistoryService historyService,
                                         IProvideImportItemService provideImportItemService,
                                         IDownloadedEpisodesImportService downloadedEpisodesImportService,
@@ -61,6 +73,7 @@ namespace NzbDrone.Core.Download
                                         Logger logger)
         {
             _eventAggregator = eventAggregator;
+            _configService = configService;
             _historyService = historyService;
             _provideImportItemService = provideImportItemService;
             _downloadedEpisodesImportService = downloadedEpisodesImportService;
@@ -77,7 +90,7 @@ namespace NzbDrone.Core.Download
 
         public void Check(TrackedDownload trackedDownload)
         {
-            if (trackedDownload.DownloadItem.Status != DownloadItemStatus.Completed)
+            if (!IsImportCandidate(trackedDownload.DownloadItem))
             {
                 return;
             }
@@ -92,10 +105,30 @@ namespace NzbDrone.Core.Download
 
             // Stop re-attempting an import that keeps failing (e.g. a destination conflict).
             // The download stays ImportBlocked so it is clearly shown as requiring manual
-            // interaction instead of flickering through ImportPending every refresh.
+            // interaction instead of flickering through ImportPending every refresh. A warned
+            // download is the exception: it entered the state machine with a client-side failure
+            // and cannot be retried forever, so once its budget is spent it is failed instead of
+            // being parked in ImportBlocked with no way out. An ImportBlocked download is waiting
+            // for a human, though, so it only becomes eligible for that failure after the
+            // manual-interaction window has elapsed.
             if (trackedDownload.State == TrackedDownloadState.ImportBlocked &&
                 trackedDownload.ImportAttempts >= MaxImportAttempts)
             {
+                if (IsWithinManualInteractionWindow(trackedDownload))
+                {
+                    return;
+                }
+
+                if (trackedDownload.DownloadItem.Status == DownloadItemStatus.Warning)
+                {
+                    _logger.Debug("Warned download '{0}' could not be imported after {1} attempts, marking as failed",
+                        trackedDownload.DownloadItem.Title,
+                        trackedDownload.ImportAttempts);
+
+                    trackedDownload.Fail();
+                    ForgetManualInteraction(trackedDownload);
+                }
+
                 return;
             }
 
@@ -461,6 +494,7 @@ namespace NzbDrone.Core.Download
             {
                 _logger.Debug("All episodes were imported for {0}", trackedDownload.DownloadItem.Title);
                 trackedDownload.State = TrackedDownloadState.Imported;
+                ForgetManualInteraction(trackedDownload);
 
                 _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload,
                     trackedDownload.RemoteEpisode.Series.Id,
@@ -507,6 +541,7 @@ namespace NzbDrone.Core.Download
                 var files = _mediaFileService.GetFiles(episodes.Select(e => e.EpisodeFileId).Where(i => i > 0).Distinct());
 
                 trackedDownload.State = TrackedDownloadState.Imported;
+                ForgetManualInteraction(trackedDownload);
                 _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload, trackedDownload.RemoteEpisode.Series.Id, files, releaseInfo));
 
                 return true;
@@ -526,6 +561,7 @@ namespace NzbDrone.Core.Download
             {
                 _logger.Debug("All movies were imported for {0}", trackedDownload.DownloadItem.Title);
                 trackedDownload.State = TrackedDownloadState.Imported;
+                ForgetManualInteraction(trackedDownload);
 
                 _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload, trackedDownload.RemoteMovie.Movie.Id));
 
@@ -564,6 +600,7 @@ namespace NzbDrone.Core.Download
                 }
 
                 trackedDownload.State = TrackedDownloadState.Imported;
+                ForgetManualInteraction(trackedDownload);
 
                 _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload, trackedDownload.RemoteMovie.Movie.Id));
 
@@ -574,12 +611,49 @@ namespace NzbDrone.Core.Download
             return false;
         }
 
+        // Download clients report Warning for two different situations. A finished download whose
+        // post-processing failed (unpack, move, final path) has nothing left to download and is a
+        // completed download with a warning: it must enter the normal import path so its files are
+        // retried deliberately, and every warning raised there counts the attempt
+        // (CountUnsuccessfulAttempt) so the item fails once the retry budget is spent instead of
+        // sitting in the queue forever. A warning while data is still outstanding (e.g. a stalled
+        // torrent) is a transient client warning on an in-progress download: it stays in the
+        // Downloading state, which keeps refreshing it until it finishes, and is not imported.
+        // Encrypted downloads belong to FailedDownloadService, which counts them until they fail.
+        private bool IsImportCandidate(DownloadClientItem downloadItem)
+        {
+            if (downloadItem.Status == DownloadItemStatus.Completed)
+            {
+                return true;
+            }
+
+            if (downloadItem.Status != DownloadItemStatus.Warning ||
+                downloadItem.IsEncrypted ||
+                downloadItem.RemainingSize > 0)
+            {
+                return false;
+            }
+
+            // ImportPending is only processed while completed download handling is enabled. When it
+            // is disabled, leave the warned item in its client state instead of parking it in a
+            // state nothing consumes.
+            return _configService.EnableCompletedDownloadHandling;
+        }
+
         // A pass that cannot progress (no grab history, a path that is not local, a title
         // mismatch) counts against the same retry budget as a failed import. Once the budget is
-        // spent the download is failed, so a warning does not leave it queued forever.
+        // spent the download is failed, so a warning does not leave it queued forever. A download
+        // already parked in ImportBlocked is waiting for a human: it must not be failed (and
+        // blocklisted) by the attempt counter, because the time-based manual-interaction window
+        // decides when it may be failed.
         private void CountUnsuccessfulAttempt(TrackedDownload trackedDownload)
         {
             trackedDownload.ImportAttempts++;
+
+            if (IsWithinManualInteractionWindow(trackedDownload))
+            {
+                return;
+            }
 
             if (trackedDownload.ImportAttempts >= MaxImportAttempts)
             {
@@ -588,6 +662,56 @@ namespace NzbDrone.Core.Download
                     trackedDownload.ImportAttempts);
 
                 trackedDownload.Fail();
+                ForgetManualInteraction(trackedDownload);
+            }
+        }
+
+        // The window starts when the item is first reported as needing manual interaction and is
+        // dropped as soon as it is no longer waiting for a human (successful import, corrected
+        // path, deleted destination file), so a later block gets a fresh window.
+        private bool IsWithinManualInteractionWindow(TrackedDownload trackedDownload)
+        {
+            var downloadId = trackedDownload.DownloadItem?.DownloadId;
+
+            if (downloadId.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            if (trackedDownload.State != TrackedDownloadState.ImportBlocked ||
+                !trackedDownload.HasNotifiedManualInteractionRequired)
+            {
+                ForgetManualInteraction(trackedDownload);
+                return false;
+            }
+
+            if (!_manualInteractionStarted.TryGetValue(downloadId, out var firstBlocked))
+            {
+                // Defensive: ImportBlocked without having passed through the notifier.
+                firstBlocked = DateTime.UtcNow;
+                _manualInteractionStarted[downloadId] = firstBlocked;
+            }
+
+            return DateTime.UtcNow - firstBlocked < ManualInteractionWindow;
+        }
+
+        private void RememberManualInteraction(TrackedDownload trackedDownload)
+        {
+            var downloadId = trackedDownload.DownloadItem?.DownloadId;
+
+            if (downloadId.IsNotNullOrWhiteSpace())
+            {
+                _manualInteractionStarted[downloadId] = DateTime.UtcNow;
+            }
+        }
+
+        private void ForgetManualInteraction(TrackedDownload trackedDownload)
+        {
+            var downloadId = trackedDownload.DownloadItem?.DownloadId;
+
+            if (downloadId.IsNotNullOrWhiteSpace())
+            {
+                _manualInteractionStarted.TryRemove(downloadId, out _);
             }
         }
 
@@ -600,6 +724,7 @@ namespace NzbDrone.Core.Download
                 var grabbedHistories = _historyService.FindByDownloadId(trackedDownload.DownloadItem.DownloadId).Where(h => h.EventType == EpisodeHistoryEventType.Grabbed).ToList();
 
                 trackedDownload.HasNotifiedManualInteractionRequired = true;
+                RememberManualInteraction(trackedDownload);
 
                 var releaseInfo = grabbedHistories.Count > 0 ? new GrabbedReleaseInfo(grabbedHistories) : null;
                 var manualInteractionEvent = new ManualInteractionRequiredEvent(trackedDownload, releaseInfo);
@@ -629,6 +754,7 @@ namespace NzbDrone.Core.Download
                 var grabbedHistories = _historyService.FindMovieByDownloadId(trackedDownload.DownloadItem.DownloadId).Where(h => h.EventType == MovieHistoryEventType.Grabbed).ToList();
 
                 trackedDownload.HasNotifiedManualInteractionRequired = true;
+                RememberManualInteraction(trackedDownload);
 
                 var releaseInfo = grabbedHistories.Count > 0 ? new GrabbedReleaseInfo(grabbedHistories) : null;
                 var manualInteractionEvent = new ManualInteractionRequiredEvent(trackedDownload, releaseInfo);

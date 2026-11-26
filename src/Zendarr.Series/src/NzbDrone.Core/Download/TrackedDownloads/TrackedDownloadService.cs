@@ -117,10 +117,17 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             {
                 LogItemChange(existingItem, existingItem.DownloadItem, downloadItem);
 
-                // The cached object is reused without re-evaluating it, so re-derive Status from
-                // its State instead of carrying a Warning and its messages from an earlier pass
-                // into a later stage. Warn() re-adds a warning if this evaluation still needs one.
-                existingItem.ResetStatusFromState();
+                // The cached object is reused without re-evaluating it, so derive Status from
+                // State instead of carrying a Warning and its messages from an earlier pass into
+                // a later stage. Warn() re-adds a warning if this evaluation still needs one.
+                // ImportBlocked is the exception: once its retry cap is spent no later pass
+                // re-warns it, so its Warning and messages are the only reason the queue can
+                // show and they must survive the reuse. Terminal states have already cleared
+                // theirs on transition, so resetting them is a no-op.
+                if (existingItem.State != TrackedDownloadState.ImportBlocked)
+                {
+                    existingItem.ResetStatusFromState();
+                }
 
                 // A changed output path means the item was moved (e.g. the user fixed the
                 // download location). Clear the retry cap so the import can run against the new
@@ -451,8 +458,16 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             switch (eventType)
             {
                 case DownloadHistoryEventType.DownloadImported:
-                case DownloadHistoryEventType.FileImported:
                     return TrackedDownloadState.Imported;
+
+                // FileImported is written per file, and a multi-file pack that imported only part
+                // of its files ends at FileImported without ever writing DownloadImported. The
+                // complete marker (DownloadImported) is written after every FileImported of an
+                // import, so it is what GetLatestDownloadHistoryItem returns for a finished
+                // download. A bare FileImported must therefore stay trackable: marking it imported
+                // made a restart treat a partial pack as done and drop the remaining files.
+                case DownloadHistoryEventType.FileImported:
+                    return TrackedDownloadState.Downloading;
                 case DownloadHistoryEventType.DownloadFailed:
                     return TrackedDownloadState.Failed;
                 case DownloadHistoryEventType.DownloadIgnored:

@@ -174,13 +174,39 @@ namespace NzbDrone.Core.Download
                 }
 
                 trackedDownload.State = TrackedDownloadState.FailedPending;
+
+                return;
             }
+
+            // A client-reported Warning is not Failed, so it reached neither branch above. When
+            // data is still outstanding the download is not finished and completed download
+            // handling will not import it. If it was not grabbed by the app either, nothing else
+            // would ever consume the item (e.g. a download the client abandoned with an error),
+            // so warn about it and count it against the same retry budget. A warned download we
+            // did grab stays in the Downloading state, because the client may still finish it.
+            if (trackedDownload.DownloadItem.Status != DownloadItemStatus.Warning ||
+                trackedDownload.DownloadItem.RemainingSize <= 0)
+            {
+                return;
+            }
+
+            var wasNotGrabbed = trackedDownload.RemoteMovie != null
+                ? GetGrabbedMovieHistory(trackedDownload.DownloadItem.DownloadId).Empty()
+                : GetGrabbedHistory(trackedDownload.DownloadItem.DownloadId).Empty();
+
+            if (!wasNotGrabbed)
+            {
+                return;
+            }
+
+            trackedDownload.Warn($"Download is in a warning state and wasn't grabbed by {BuildInfo.AppName}, skipping automatic download handling");
+            CountUnsuccessfulCheck(trackedDownload);
         }
 
-        // A failed/encrypted download that was not grabbed by the app can only be warned about,
-        // and that warning would otherwise have no consumer: the item would stay in the queue
-        // forever. Count every pass against the retry budget and fail it once the budget is
-        // spent so the download reaches a terminal state.
+        // A failed, encrypted or warned download that was not grabbed by the app can only be
+        // warned about, and that warning would otherwise have no consumer: the item would stay in
+        // the queue forever. Count every pass against the retry budget and fail it once the budget
+        // is spent so the download reaches a terminal state.
         private void CountUnsuccessfulCheck(TrackedDownload trackedDownload)
         {
             trackedDownload.ImportAttempts++;

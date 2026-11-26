@@ -422,7 +422,8 @@ function MediaActivityPage() {
 
         return (
           eventType === 'downloadFolderImported' ||
-          eventType === 'seriesFolderImported'
+          eventType === 'seriesFolderImported' ||
+          eventType === 'movieFolderImported'
         );
       }).length;
       const failed = historyItems.filter(

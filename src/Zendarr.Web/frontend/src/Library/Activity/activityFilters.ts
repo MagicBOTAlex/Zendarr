@@ -327,7 +327,15 @@ export const HISTORY_FILTERS: Filter[] = [
     key: 'imported',
     label: () => translate('Imported'),
     filters: [
-      { key: 'eventType', value: 'downloadFolderImported', type: 'equal' },
+      {
+        key: 'eventType',
+        value: [
+          'downloadFolderImported',
+          'seriesFolderImported',
+          'movieFolderImported',
+        ],
+        type: 'equal',
+      },
     ],
   },
   {

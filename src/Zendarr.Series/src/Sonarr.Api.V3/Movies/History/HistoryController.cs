@@ -122,7 +122,18 @@ namespace Sonarr.Api.V3.Movies.History
 
         private static int NormalizeEventType(int value)
         {
-            return value >= 0 && value <= 9 ? value + 100 : value;
+            // Mirrors migration 325: legacy movie values 2 (SeriesFolderImported) and
+            // 5 (EpisodeFileDeleted) have no movie-range member, so they fold onto the
+            // closest defined movie events instead of becoming undefined 102/105.
+            switch (value)
+            {
+                case 2:
+                    return (int)MovieHistoryEventType.MovieFolderImported;
+                case 5:
+                    return (int)MovieHistoryEventType.MovieFileDeleted;
+                default:
+                    return value >= 0 && value <= 9 ? value + 100 : value;
+            }
         }
 
         private static bool TryParseEventType(string value, out MovieHistoryEventType? result)

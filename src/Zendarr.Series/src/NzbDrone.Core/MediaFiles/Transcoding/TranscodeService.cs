@@ -317,16 +317,10 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                 _logger.Error(ex, "Unable to recover interrupted transcode jobs");
             }
 
-            try
-            {
-                // Housekeeping also runs at startup, so abandoned reviews are collected even when
-                // media compression is currently disabled (the periodic pump pass is gated on it).
-                ExpireStaleReviews();
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Unable to expire stale transcode reviews");
-            }
+            // Housekeeping also runs at startup, and the pump repeats it on the reconcile cadence
+            // whether or not media compression is enabled (see SweepExpiredReviews), so an
+            // abandoned review is collected within one interval instead of waiting for a restart.
+            SweepExpiredReviews();
 
             Start();
         }
@@ -1191,16 +1185,26 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             {
                 try
                 {
+                    // Housekeeping runs on its own cadence regardless of the compression setting:
+                    // an AwaitingReview row is already terminal for encoding, so turning compression
+                    // off (or a review abandoned before it was turned off) must not strand its output
+                    // in the working folder until the next restart.
+                    if (DateTime.UtcNow - _lastReconcileUtc >= ReconcileInterval)
+                    {
+                        _lastReconcileUtc = DateTime.UtcNow;
+
+                        SweepExpiredReviews();
+
+                        // Recovering a stranded Running/Transferring row only matters while the
+                        // scheduler is actually producing work, so that part stays gated.
+                        if (_configService.MediaCompressionEnabled)
+                        {
+                            RecoverStrandedJobs();
+                        }
+                    }
+
                     if (_configService.MediaCompressionEnabled)
                     {
-                        // Periodically re-run recovery for rows the startup pass missed (e.g. an IO
-                        // error) so a stranded Running/Transferring row is not stuck forever.
-                        if (DateTime.UtcNow - _lastReconcileUtc >= ReconcileInterval)
-                        {
-                            _lastReconcileUtc = DateTime.UtcNow;
-                            ReconcileStrandedJobs();
-                        }
-
                         ScheduleOnce();
                     }
                 }
@@ -1992,18 +1996,22 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             }
         }
 
-        // Re-runs recovery for Running/Transferring rows the startup pass missed (e.g. an IO error
-        // aborted the pass, or the row was written after Handle ran). A row that still has an
-        // in-memory owner, or was touched within StrandedJobGrace (so it may be mid-claim), is left
-        // alone; the transfer watcher keeps LastUpdatedAt fresh, so a live copy never ages out.
+        // Startup/housekeeping pass: sweep the review backlog and recover stranded rows. The pump
+        // calls the two halves separately (the sweep must run even while compression is disabled);
+        // tests call this combined pass directly.
         internal void ReconcileStrandedJobs()
         {
-            var now = DateTime.UtcNow;
+            SweepExpiredReviews();
+            RecoverStrandedJobs();
+        }
 
-            // The same cadence that recovers interrupted encodes also sweeps the review backlog:
-            // AwaitingReview is terminal (only an explicit resolve leaves it), so an abandoned
-            // review would otherwise keep its multi-GB output in the working folder indefinitely.
-            ExpireStaleReviews();
+        // Periodically re-runs recovery for Running/Transferring rows the startup pass missed (e.g.
+        // an IO error) so a stranded row is not stuck forever. A row that still has an in-memory
+        // owner, or was touched within StrandedJobGrace (so it may be mid-claim), is left alone;
+        // the transfer watcher keeps LastUpdatedAt fresh, so a live copy never ages out.
+        private void RecoverStrandedJobs()
+        {
+            var now = DateTime.UtcNow;
 
             foreach (var job in _repository.GetByStatus(TranscodeJobStatus.Running) ?? new List<TranscodeJob>())
             {
@@ -2026,6 +2034,20 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             }
         }
 
+        // The review sweep is housekeeping, not encoding: it must never be gated on media
+        // compression, and a failing sweep must never take the scheduler tick down with it.
+        private void SweepExpiredReviews()
+        {
+            try
+            {
+                ExpireStaleReviews();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Unable to expire stale transcode reviews");
+            }
+        }
+
         // Cancels reviews that have been waiting longer than ReviewTimeout so their temp output is
         // removed. Runs at startup and on the reconcile cadence; every row is isolated so one bad
         // row cannot stop the sweep. A review is only expired when a timestamp proves its age, and
@@ -2044,6 +2066,7 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
         private void ExpireReview(TranscodeJob job, DateTime now)
         {
             string outputPath = null;
+            TranscodeJob expired = null;
 
             // Share the per-job transition gate with resolve/cancel: a review claimed by the user
             // just before this pass is Transferring (or already terminal) and is left alone, and a
@@ -2062,17 +2085,95 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
                 _logger.Warn("Discarding the transcoded output of job {0}: the review expired after {1}", fresh.Id, ReviewTimeout);
 
                 // Finish re-checks the row, allows AwaitingReview -> Cancelled, clears the stale
-                // output fields and removes the working folder.
+                // output fields and removes the working folder. It throws (and the row/output stay)
+                // when the terminal write cannot be persisted.
                 Finish(fresh, TranscodeJobStatus.Cancelled, message: "Review expired; the transcoded output was discarded");
+
+                // Finish nulls the output fields in place; keep the row so the guard below can still
+                // see the source/container the output was produced from.
+                expired = fresh;
             }
 
-            // Finish removes the per-job folder; delete the described output too in case the
-            // configured working folder changed while the review was pending. Never touch a path
-            // outside the current working folder.
-            if (outputPath.IsNotNullOrWhiteSpace() && IsInsideDirectory(GetTempFolder(), outputPath))
+            // Finish removes the per-job folder of the working folder in use *now*. The review may
+            // have been produced under a different (since reconfigured) working folder, so remove
+            // the path recorded on the row too, guarded so only this job's own working file can be
+            // deleted (see IsOwnedWorkingFile).
+            DeleteExpiredReviewOutput(expired, outputPath);
+        }
+
+        // Removes the output described by an expired review once the row has been durably cancelled.
+        private void DeleteExpiredReviewOutput(TranscodeJob job, string outputPath)
+        {
+            if (job == null || job.Status != TranscodeJobStatus.Cancelled || !IsOwnedWorkingFile(job, outputPath))
             {
-                DeleteQuietly(outputPath);
+                return;
             }
+
+            DeleteQuietly(outputPath);
+        }
+
+        // Guards the expiry cleanup so a stale or hostile OutputPath can never point the sweep at a
+        // library file. A path is deleted only when it is this job's own working file: it lives in
+        // the per-job folder of the working folder in use now or of the app's default working root
+        // (the configured folder may have changed since the encode), or - for a custom root that is
+        // no longer configured - the recorded path still has the exact shape the encoder wrote
+        // (<root>/<job id>/<output file name>) and is not the source file itself.
+        internal bool IsOwnedWorkingFile(TranscodeJob job, string outputPath)
+        {
+            if (job == null || outputPath.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            string normalized;
+            string sourcePath = null;
+            string expectedName;
+
+            try
+            {
+                normalized = Path.GetFullPath(outputPath);
+                sourcePath = job.SourcePath.IsNotNullOrWhiteSpace() ? Path.GetFullPath(job.SourcePath) : null;
+                expectedName = GetOutputFileName(job);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to resolve the transcode output path {0} for job {1}", outputPath, job.Id);
+                return false;
+            }
+
+            // Never delete the source file, even if a row was ever written with the two mixed up.
+            if (string.Equals(normalized, sourcePath, PathComparison))
+            {
+                return false;
+            }
+
+            var jobFolder = job.Id.ToString(CultureInfo.InvariantCulture);
+            var currentFolder = Path.Combine(GetTempFolder(), jobFolder);
+            var defaultFolder = Path.Combine(_appFolderInfo.AppDataFolder, "transcode", jobFolder);
+
+            if (IsInsideDirectory(currentFolder, normalized) || IsInsideDirectory(defaultFolder, normalized))
+            {
+                return true;
+            }
+
+            // The encode-time working root is no longer configured: accept the recorded path only
+            // when its shape still proves it is this job's working file, and never a file sitting
+            // beside the source in the library.
+            var directory = Path.GetDirectoryName(normalized);
+            var sourceDirectory = sourcePath == null ? null : Path.GetDirectoryName(sourcePath);
+
+            if (directory == null ||
+                !string.Equals(Path.GetFileName(directory), jobFolder, PathComparison) ||
+                (sourceDirectory.IsNotNullOrWhiteSpace() && IsInsideDirectory(sourceDirectory, normalized)))
+            {
+                return false;
+            }
+
+            var fileName = Path.GetFileName(normalized);
+
+            return string.Equals(fileName, expectedName, PathComparison) ||
+                   (job.SourcePath.IsNotNullOrWhiteSpace() &&
+                    string.Equals(fileName, Path.GetFileName(job.SourcePath), PathComparison));
         }
 
         private bool IsReviewExpired(TranscodeJob job, DateTime now)
@@ -2457,7 +2558,9 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             }
         }
 
-        private string GetOutputPath(TranscodeJob job)
+        // The file name the encoder writes into the per-job working folder. Kept separate from the
+        // folder so the expiry cleanup can recognise a recorded output after the folder changed.
+        private static string GetOutputFileName(TranscodeJob job)
         {
             var fileName = job.SourcePath == null ? $"{job.Id}.tmp" : Path.GetFileName(job.SourcePath);
 
@@ -2465,6 +2568,13 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             {
                 fileName = Path.ChangeExtension(fileName, "." + job.Container.TrimStart('.'));
             }
+
+            return fileName;
+        }
+
+        private string GetOutputPath(TranscodeJob job)
+        {
+            var fileName = GetOutputFileName(job);
 
             var folder = Path.Combine(GetTempFolder(), job.Id.ToString());
             var path = Path.Combine(folder, fileName);

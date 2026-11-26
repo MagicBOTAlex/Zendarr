@@ -273,6 +273,25 @@ namespace Sonarr.Api.V3.Movies
             return Accepted(moviesResource.Id);
         }
 
+        [HttpPut("{id:int}/status")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public ActionResult<MovieResource> RestoreMovie([FromRoute] int id, [FromBody] MovieStatusResource statusResource)
+        {
+            ValidateId(id);
+
+            var status = statusResource?.Status;
+
+            if (status == null)
+            {
+                throw new BadRequestException("A status is required");
+            }
+
+            var movie = _moviesService.RestoreMovie(id, status.Value);
+
+            return Ok(MapToResource(movie));
+        }
+
         [RestDeleteById]
         public void DeleteMovie(int id, bool deleteFiles = false, bool addImportExclusion = false)
         {
@@ -354,5 +373,10 @@ namespace Sonarr.Api.V3.Movies
                 BroadcastResourceChange(ModelAction.Updated, message.Movie.Id);
             }
         }
+    }
+
+    public class MovieStatusResource
+    {
+        public MovieStatusType? Status { get; set; }
     }
 }

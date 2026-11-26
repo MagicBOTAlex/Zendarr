@@ -299,11 +299,15 @@ namespace NzbDrone.Core.Tv
         public Series UpdateSeriesMetadata(Series series)
         {
             // Metadata refreshes must not overwrite settings or a concurrently marked status.
+            // Path is written because a refresh normalises its casing first (RefreshSeriesService
+            // rewrites it from the root folder); excluding it here would drop that correction.
+            // Status is still excluded and is advanced separately by UpdateSeriesStatus below.
             _seriesRepository.SetFields(series,
                 s => s.TvdbId,
                 s => s.Title,
                 s => s.Year,
                 s => s.TitleSlug,
+                s => s.Path,
                 s => s.TvRageId,
                 s => s.TvMazeId,
                 s => s.TmdbId,

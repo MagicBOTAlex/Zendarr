@@ -168,24 +168,29 @@ namespace NzbDrone.Core.Messaging.Events
 
         private void PersistFailedHistory(DownloadFailedEvent message)
         {
-            // DownloadHistory requires an ID; do not leave a one-sided failure for
-            // legacy grabs that cannot be correlated to a download.
-            if (string.IsNullOrWhiteSpace(message.DownloadId))
+            var hasDownloadId = !message.DownloadId.IsNullOrWhiteSpace();
+            var hasMedia = message.MovieId > 0 || (message.EpisodeIds != null && message.EpisodeIds.Count > 0);
+
+            if (!hasMedia)
             {
-                throw new InvalidOperationException("Unable to mark download as failed without a download ID");
+                // Nothing can be attached to a History row. Let the handlers see the
+                // event instead of throwing out of the publisher.
+                return;
             }
 
-            if (message.MovieId == 0 && (message.EpisodeIds == null || message.EpisodeIds.Count == 0))
-            {
-                throw new InvalidOperationException("Unable to mark download as failed without an episode or movie");
-            }
-
+            // A DownloadHistory row cannot be keyed without a download id, so for legacy
+            // grabs that were never correlated to a download only the History row is
+            // written (the old HistoryService.Handle behavior).
+            // FailedDownloadService.MarkAsFailed(int) publishes exactly those blank-id rows,
+            // so this path must still persist the failure history and must not throw.
             using var connection = _serviceFactory.Build<IMainDatabase>().OpenConnection();
             using var transaction = connection.BeginTransaction();
-            var grab = connection.QueryFirstOrDefault<DownloadHistory>(
-                "SELECT * FROM \"DownloadHistory\" WHERE \"DownloadId\" = @DownloadId AND \"EventType\" = @EventType ORDER BY \"Date\" DESC LIMIT 1",
-                new { message.DownloadId, EventType = DownloadHistoryEventType.DownloadGrabbed },
-                transaction);
+            var grab = hasDownloadId
+                ? connection.QueryFirstOrDefault<DownloadHistory>(
+                    "SELECT * FROM \"DownloadHistory\" WHERE \"DownloadId\" = @DownloadId AND \"EventType\" = @EventType ORDER BY \"Date\" DESC LIMIT 1",
+                    new { message.DownloadId, EventType = DownloadHistoryEventType.DownloadGrabbed },
+                    transaction)
+                : null;
             var tracked = message.TrackedDownload;
             var data = new Dictionary<string, string>
             {
@@ -221,23 +226,27 @@ namespace NzbDrone.Core.Messaging.Events
                     transaction);
             }
 
-            var downloadHistory = new DownloadHistory
+            if (hasDownloadId)
             {
-                EventType = DownloadHistoryEventType.DownloadFailed,
-                SeriesId = message.SeriesId,
-                MovieId = message.MovieId,
-                DownloadId = message.DownloadId,
-                SourceTitle = message.SourceTitle,
-                Date = date,
-                Protocol = tracked?.Protocol ?? grab?.Protocol ?? default,
-                DownloadClientId = tracked?.DownloadClient ?? grab?.DownloadClientId ?? 0,
-                Data = new Dictionary<string, string>
+                var downloadHistory = new DownloadHistory
                 {
-                    ["DownloadClient"] = tracked?.DownloadItem.DownloadClientInfo.Type ?? message.DownloadClient,
-                    ["DownloadClientName"] = data["DownloadClientName"]
-                }
-            };
-            connection.Execute("INSERT INTO \"DownloadHistory\" (\"EventType\", \"SeriesId\", \"MovieId\", \"DownloadId\", \"SourceTitle\", \"Date\", \"Protocol\", \"IndexerId\", \"DownloadClientId\", \"Release\", \"Data\") VALUES (@EventType, @SeriesId, @MovieId, @DownloadId, @SourceTitle, @Date, @Protocol, @IndexerId, @DownloadClientId, @Release, @Data)", downloadHistory, transaction);
+                    EventType = DownloadHistoryEventType.DownloadFailed,
+                    SeriesId = message.SeriesId,
+                    MovieId = message.MovieId,
+                    DownloadId = message.DownloadId,
+                    SourceTitle = message.SourceTitle,
+                    Date = date,
+                    Protocol = tracked?.Protocol ?? grab?.Protocol ?? default,
+                    DownloadClientId = tracked?.DownloadClient ?? grab?.DownloadClientId ?? 0,
+                    Data = new Dictionary<string, string>
+                    {
+                        ["DownloadClient"] = tracked?.DownloadItem.DownloadClientInfo.Type ?? message.DownloadClient,
+                        ["DownloadClientName"] = data["DownloadClientName"]
+                    }
+                };
+                connection.Execute("INSERT INTO \"DownloadHistory\" (\"EventType\", \"SeriesId\", \"MovieId\", \"DownloadId\", \"SourceTitle\", \"Date\", \"Protocol\", \"IndexerId\", \"DownloadClientId\", \"Release\", \"Data\") VALUES (@EventType, @SeriesId, @MovieId, @DownloadId, @SourceTitle, @Date, @Protocol, @IndexerId, @DownloadClientId, @Release, @Data)", downloadHistory, transaction);
+            }
+
             transaction.Commit();
         }
 

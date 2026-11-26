@@ -15,7 +15,16 @@ namespace NzbDrone.Core.Download.History
     {
         DownloadHistory GetLatestDownloadHistoryItem(string downloadId);
         DownloadHistory GetLatestGrab(string downloadId);
-        void RecordRemovedDownload(TrackedDownload trackedDownload);
+
+        // Terminal outcome for a download the user removed from the download client (or that
+        // vanished from it): the grab never became an import or a failure, so it is recorded
+        // as "ignored" to release the durable already-grabbed guard.
+        void RecordRemovedDownload(TrackedDownload trackedDownload, string message = "Removed from queue");
+
+        // Terminal outcome for a download the user re-filed in the client by changing its
+        // category. That is a hand-off (normally to the client's "imported" category), not a
+        // rejection, so it is recorded as an import rather than as "ignored".
+        void RecordCategoryChangedDownload(TrackedDownload trackedDownload, string message = "Category changed");
     }
 
     public class DownloadHistoryService : IDownloadHistoryService,
@@ -80,9 +89,25 @@ namespace NzbDrone.Core.Download.History
                               .FirstOrDefault(d => d.EventType == DownloadHistoryEventType.DownloadGrabbed);
         }
 
-        public void RecordRemovedDownload(TrackedDownload trackedDownload)
+        public void RecordRemovedDownload(TrackedDownload trackedDownload, string message = "Removed from queue")
         {
-            var downloadItem = trackedDownload.DownloadItem;
+            // Removing the download stops tracking without a failed/imported event and the user
+            // did not ask for the release to be grabbed again, so mark it "ignored".
+            RecordTerminalDownload(trackedDownload, DownloadHistoryEventType.DownloadIgnored, message);
+        }
+
+        public void RecordCategoryChangedDownload(TrackedDownload trackedDownload, string message = "Category changed")
+        {
+            // Changing the category hands the item off inside the download client (the
+            // changeCategory action calls MarkItemAsImported), so the download was moved out of
+            // Zendarr's keeping rather than rejected. Recording "ignored" would claim the user
+            // threw the download away; record the terminal import instead.
+            RecordTerminalDownload(trackedDownload, DownloadHistoryEventType.DownloadImported, message);
+        }
+
+        private void RecordTerminalDownload(TrackedDownload trackedDownload, DownloadHistoryEventType eventType, string message)
+        {
+            var downloadItem = trackedDownload?.DownloadItem;
 
             if (downloadItem == null || downloadItem.DownloadId.IsNullOrWhiteSpace())
             {
@@ -90,11 +115,21 @@ namespace NzbDrone.Core.Download.History
             }
 
             // Removing the download from the client, or changing its category, stops tracking
-            // without a failed/ignored/imported event. Persist a terminal event so the durable
-            // "already grabbed" guard does not keep rejecting the release forever.
+            // without a failed/ignored/imported event. Persist the supplied terminal event so the
+            // durable "already grabbed" guard does not keep rejecting the release forever.
+            //
+            // Never overwrite an existing terminal event: a download that was already imported
+            // or failed must keep that outcome when the client later auto-removes it.
+            var latestEvent = GetLatestDownloadHistoryItem(downloadItem.DownloadId);
+
+            if (latestEvent != null && latestEvent.EventType != DownloadHistoryEventType.DownloadGrabbed)
+            {
+                return;
+            }
+
             var history = new DownloadHistory
             {
-                EventType = DownloadHistoryEventType.DownloadIgnored,
+                EventType = eventType,
                 SeriesId = trackedDownload.RemoteEpisode?.Series?.Id ?? 0,
                 MovieId = trackedDownload.RemoteMovie?.Movie?.Id ?? 0,
                 DownloadId = downloadItem.DownloadId,
@@ -106,7 +141,7 @@ namespace NzbDrone.Core.Download.History
 
             history.Data.Add("DownloadClient", downloadItem.DownloadClientInfo?.Type);
             history.Data.Add("DownloadClientName", downloadItem.DownloadClientInfo?.Name);
-            history.Data.Add("Message", "Removed from queue");
+            history.Data.Add("Message", message);
 
             _repository.Insert(history);
         }
