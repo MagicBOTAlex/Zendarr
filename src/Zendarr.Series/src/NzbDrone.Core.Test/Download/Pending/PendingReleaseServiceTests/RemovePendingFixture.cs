@@ -1,6 +1,6 @@
 using System.Collections.Generic;
-using System.Linq;
 using FizzWare.NBuilder;
+using FluentAssertions;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Common.Crypto;
@@ -94,7 +94,7 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
             InitializeReleases();
             Subject.RemovePendingQueueItems(queueId);
 
-            AssertRemoved(3, 4);
+            AssertRemoved(3);
         }
 
         [Test]
@@ -110,7 +110,7 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
             InitializeReleases();
             Subject.RemovePendingQueueItems(queueId);
 
-            AssertRemoved(1, 2);
+            AssertRemoved(1);
         }
 
         [Test]
@@ -126,7 +126,7 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
             InitializeReleases();
             Subject.RemovePendingQueueItems(queueId);
 
-            AssertRemoved(1, 2);
+            AssertRemoved(1);
         }
 
         [Test]
@@ -159,7 +159,8 @@ namespace NzbDrone.Core.Test.Download.Pending.PendingReleaseServiceTests
 
         private void AssertRemoved(params int[] ids)
         {
-            Mocker.GetMock<IPendingReleaseRepository>().Verify(c => c.DeleteMany(It.Is<IEnumerable<int>>(s => s.SequenceEqual(ids))));
+            ids.Should().HaveCount(1);
+            Mocker.GetMock<IPendingReleaseRepository>().Verify(c => c.Delete(ids[0]), Times.Once());
         }
     }
 }

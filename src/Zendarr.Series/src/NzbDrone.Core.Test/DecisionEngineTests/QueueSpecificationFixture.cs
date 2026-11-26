@@ -7,7 +7,9 @@ using NUnit.Framework;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.Download.History;
 using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
@@ -77,6 +79,26 @@ namespace NzbDrone.Core.Test.DecisionEngineTests
             Mocker.GetMock<ICustomFormatCalculationService>()
                   .Setup(x => x.ParseCustomFormat(It.IsAny<RemoteEpisode>(), It.IsAny<long>()))
                   .Returns(new List<CustomFormat>());
+
+            Mocker.GetMock<IHistoryService>()
+                  .Setup(x => x.FindByEpisodeId(It.IsAny<int>()))
+                  .Returns(new List<EpisodeHistory>());
+
+            Mocker.GetMock<IHistoryService>()
+                  .Setup(x => x.FindByDownloadId(It.IsAny<string>()))
+                  .Returns(new List<EpisodeHistory>());
+
+            Mocker.GetMock<IHistoryService>()
+                  .Setup(x => x.GetByMovieId(It.IsAny<int>(), It.IsAny<MovieHistoryEventType?>()))
+                  .Returns(new List<MovieHistory>());
+
+            Mocker.GetMock<IHistoryService>()
+                  .Setup(x => x.FindMovieByDownloadId(It.IsAny<string>()))
+                  .Returns(new List<MovieHistory>());
+
+            Mocker.GetMock<IDownloadHistoryService>()
+                  .Setup(x => x.GetLatestDownloadHistoryItem(It.IsAny<string>()))
+                  .Returns((DownloadHistory)null);
         }
 
         private void GivenEmptyQueue()

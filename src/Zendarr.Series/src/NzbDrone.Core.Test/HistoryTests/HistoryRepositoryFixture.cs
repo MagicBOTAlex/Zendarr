@@ -4,6 +4,7 @@ using FizzWare.NBuilder;
 using FluentAssertions;
 using NUnit.Framework;
 using NzbDrone.Core.History;
+using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.Languages;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
@@ -114,6 +115,7 @@ namespace NzbDrone.Core.Test.HistoryTests
                 .With(c => c.Quality = new QualityModel(Quality.Bluray1080p))
                 .With(c => c.Languages = new List<Language> { Language.English })
                 .With(c => c.EventType = EpisodeHistoryEventType.Grabbed)
+                .With(c => c.MediaType = MediaType.Series)
                 .BuildListOfNew();
 
             Db.InsertMany(items);

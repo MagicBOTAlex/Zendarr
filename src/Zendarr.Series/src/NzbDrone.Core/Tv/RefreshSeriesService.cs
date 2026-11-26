@@ -69,9 +69,12 @@ namespace NzbDrone.Core.Tv
             }
             catch (SeriesNotFoundException)
             {
-                series = _seriesService.UpdateSeriesStatus(series.Id, SeriesStatusType.Deleted);
-                _logger.Debug("Series marked as deleted on tvdb for {0}", series.Title);
-                _eventAggregator.PublishEvent(new SeriesUpdatedEvent(series));
+                if (series.Status != SeriesStatusType.Deleted)
+                {
+                    series = _seriesService.UpdateSeriesStatus(series.Id, SeriesStatusType.Deleted);
+                    _logger.Debug("Series marked as deleted on tvdb for {0}", series.Title);
+                    _eventAggregator.PublishEvent(new SeriesUpdatedEvent(series));
+                }
 
                 throw;
             }

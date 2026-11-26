@@ -97,9 +97,9 @@ namespace NzbDrone.Core.Test.TvTests.SeriesServiceTests
                     TagsToRemove = new HashSet<int> { 1 }
                 });
 
-            var result = Subject.UpdateSeries(_fakeSeries);
+            Subject.UpdateSeries(_fakeSeries);
 
-            result.Tags.Should().BeEquivalentTo(new[] { 2, 3 });
+            _fakeSeries.Tags.Should().BeEquivalentTo(new[] { 2, 3 });
         }
     }
 }

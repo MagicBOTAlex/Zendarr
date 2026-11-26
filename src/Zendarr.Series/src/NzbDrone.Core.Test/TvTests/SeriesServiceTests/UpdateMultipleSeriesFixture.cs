@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using Moq;
@@ -36,11 +38,11 @@ namespace NzbDrone.Core.Test.TvTests.SeriesServiceTests
         }
 
         [Test]
-        public void should_call_repo_updateMany()
+        public void should_call_repo_setFields()
         {
             Subject.UpdateSeries(_series, false);
 
-            Mocker.GetMock<ISeriesRepository>().Verify(v => v.UpdateMany(_series), Times.Once());
+            Mocker.GetMock<ISeriesRepository>().Verify(v => v.SetFields(It.IsAny<IList<Series>>(), It.IsAny<Expression<Func<Series, object>>[]>()), Times.Once());
         }
 
         [Test]

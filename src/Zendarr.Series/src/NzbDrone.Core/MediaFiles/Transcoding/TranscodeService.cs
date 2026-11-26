@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Data;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -344,84 +344,86 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
         private TransferClaim ClaimTransfer(int jobId)
         {
             lock (GetResolveLock(jobId))
-            lock (GetTransitionLock(jobId))
             {
-                var job = LoadReviewable(jobId);
-
-                if (job.OutputPath.IsNullOrWhiteSpace() || !_diskProvider.FileExists(job.OutputPath))
+                lock (GetTransitionLock(jobId))
                 {
-                    throw new InvalidOperationException("The transcoded output file is missing");
-                }
+                    var job = LoadReviewable(jobId);
 
-                string destination;
+                    if (job.OutputPath.IsNullOrWhiteSpace() || !_diskProvider.FileExists(job.OutputPath))
+                    {
+                        throw new InvalidOperationException("The transcoded output file is missing");
+                    }
 
-                try
-                {
-                    destination = GetDestinationPath(job);
-                }
-                catch (Exception ex)
-                {
-                    // A hostile Container/Tag must not surface as a bare API error: fail the job's
-                    // resolve with a clear message and keep it in review so the user can fix or discard.
-                    job.Error = $"Unable to determine the transcode destination: {ex.Message}";
+                    string destination;
+
+                    try
+                    {
+                        destination = GetDestinationPath(job);
+                    }
+                    catch (Exception ex)
+                    {
+                        // A hostile Container/Tag must not surface as a bare API error: fail the job's
+                        // resolve with a clear message and keep it in review so the user can fix or discard.
+                        job.Error = $"Unable to determine the transcode destination: {ex.Message}";
+                        job.LastUpdatedAt = DateTime.UtcNow;
+                        Persist(job);
+                        Publish(job);
+
+                        throw new InvalidOperationException(job.Error, ex);
+                    }
+
+                    var outputSize = GetFileSizeQuietly(job.OutputPath);
+
+                    if (outputSize <= 0)
+                    {
+                        // Never let a degenerate encode replace a good library file with an empty one.
+                        job.Error = "The transcoded output is empty";
+                        job.LastUpdatedAt = DateTime.UtcNow;
+                        Persist(job);
+                        Publish(job);
+
+                        throw new InvalidOperationException(job.Error);
+                    }
+
+                    if (IsCrossMount(job.OutputPath, destination) && !HasEnoughSpaceAt(destination, outputSize))
+                    {
+                        job.Error = $"Not enough free space at {Path.GetDirectoryName(destination)} to place the transcoded file";
+                        job.LastUpdatedAt = DateTime.UtcNow;
+                        Persist(job);
+                        Publish(job);
+
+                        throw new InvalidOperationException(job.Error);
+                    }
+
+                    // Copy the finished file next to its destination first; the original is only removed
+                    // once the replacement is in place, so a failed transfer (e.g. a full library disk)
+                    // can never lose the source file.
+                    var staging = GetStagingPath(destination, job.Id);
+                    DeleteQuietly(staging);
+
+                    // Moving the finished file into the library can be a cross-volume copy of many GB,
+                    // so surface it as its own status with byte progress while it runs.
+                    job.Status = TranscodeJobStatus.Transferring;
+                    job.Progress = 0;
+                    job.Speed = null;
+                    job.Fps = null;
+                    job.Eta = null;
+                    job.Error = null;
                     job.LastUpdatedAt = DateTime.UtcNow;
-                    Persist(job);
+
+                    // This write is the mutual-exclusion token for the whole transfer: if it cannot be
+                    // persisted the row is not claimed, so abort instead of copying a second time.
+                    if (!TryPersistRequired(job))
+                    {
+                        job.Status = TranscodeJobStatus.AwaitingReview;
+                        job.Error = "Unable to persist the transfer state";
+                        throw new InvalidOperationException(job.Error);
+                    }
+
                     Publish(job);
 
-                    throw new InvalidOperationException(job.Error, ex);
+                    return new TransferClaim(job, destination, staging, outputSize);
                 }
-
-                var outputSize = GetFileSizeQuietly(job.OutputPath);
-
-                if (outputSize <= 0)
-                {
-                    // Never let a degenerate encode replace a good library file with an empty one.
-                    job.Error = "The transcoded output is empty";
-                    job.LastUpdatedAt = DateTime.UtcNow;
-                    Persist(job);
-                    Publish(job);
-
-                    throw new InvalidOperationException(job.Error);
-                }
-
-                if (IsCrossMount(job.OutputPath, destination) && !HasEnoughSpaceAt(destination, outputSize))
-                {
-                    job.Error = $"Not enough free space at {Path.GetDirectoryName(destination)} to place the transcoded file";
-                    job.LastUpdatedAt = DateTime.UtcNow;
-                    Persist(job);
-                    Publish(job);
-
-                    throw new InvalidOperationException(job.Error);
-                }
-
-                // Copy the finished file next to its destination first; the original is only removed
-                // once the replacement is in place, so a failed transfer (e.g. a full library disk)
-                // can never lose the source file.
-                var staging = GetStagingPath(destination, job.Id);
-                DeleteQuietly(staging);
-
-                // Moving the finished file into the library can be a cross-volume copy of many GB,
-                // so surface it as its own status with byte progress while it runs.
-                job.Status = TranscodeJobStatus.Transferring;
-                job.Progress = 0;
-                job.Speed = null;
-                job.Fps = null;
-                job.Eta = null;
-                job.Error = null;
-                job.LastUpdatedAt = DateTime.UtcNow;
-
-                // This write is the mutual-exclusion token for the whole transfer: if it cannot be
-                // persisted the row is not claimed, so abort instead of copying a second time.
-                if (!TryPersistRequired(job))
-                {
-                    job.Status = TranscodeJobStatus.AwaitingReview;
-                    job.Error = "Unable to persist the transfer state";
-                    throw new InvalidOperationException(job.Error);
-                }
-
-                Publish(job);
-
-                return new TransferClaim(job, destination, staging, outputSize);
             }
         }
 
@@ -2139,15 +2141,19 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             using (var connection = _database.OpenConnection())
             using (var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted))
             {
-                var updated = connection.Execute($"UPDATE \"{table}\" SET \"Size\" = @size, \"MediaInfo\" = @mediaInfo, \"OriginalFilePath\" = @path, \"RelativePath\" = @relativePath WHERE \"Id\" = @fileId",
-                    new { size, mediaInfo, path, relativePath, fileId }, transaction);
+                var updated = connection.Execute(
+                    $"UPDATE \"{table}\" SET \"Size\" = @size, \"MediaInfo\" = @mediaInfo, \"OriginalFilePath\" = @path, \"RelativePath\" = @relativePath WHERE \"Id\" = @fileId",
+                    new { size, mediaInfo, path, relativePath, fileId },
+                    transaction);
                 if (updated != 1)
                 {
                     throw new InvalidOperationException("Library file no longer exists");
                 }
 
-                updated = connection.Execute("UPDATE \"TranscodeJobs\" SET \"Status\" = @status, \"Progress\" = @progress, \"Error\" = NULL, \"OriginalPath\" = @originalPath, \"EndedAt\" = @now, \"LastUpdatedAt\" = @now WHERE \"Id\" = @id AND \"Status\" = @transferring",
-                    new { status = (int)TranscodeJobStatus.Completed, progress = 100, originalPath = job.OriginalPath, now, id = job.Id, transferring = (int)TranscodeJobStatus.Transferring }, transaction);
+                updated = connection.Execute(
+                    "UPDATE \"TranscodeJobs\" SET \"Status\" = @status, \"Progress\" = @progress, \"Error\" = NULL, \"OriginalPath\" = @originalPath, \"EndedAt\" = @now, \"LastUpdatedAt\" = @now WHERE \"Id\" = @id AND \"Status\" = @transferring",
+                    new { status = (int)TranscodeJobStatus.Completed, progress = 100, originalPath = job.OriginalPath, now, id = job.Id, transferring = (int)TranscodeJobStatus.Transferring },
+                    transaction);
                 if (updated != 1)
                 {
                     throw new InvalidOperationException($"Transcode job {job.Id} is no longer transferring");

@@ -7,7 +7,6 @@ using NLog;
 using NzbDrone.Common;
 using NzbDrone.Common.EnsureThat;
 using NzbDrone.Common.EnvironmentInfo;
-using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Common.Reflection;
 using NzbDrone.Common.TPL;
@@ -185,7 +184,8 @@ namespace NzbDrone.Core.Messaging.Events
             using var transaction = connection.BeginTransaction();
             var grab = connection.QueryFirstOrDefault<DownloadHistory>(
                 "SELECT * FROM \"DownloadHistory\" WHERE \"DownloadId\" = @DownloadId AND \"EventType\" = @EventType ORDER BY \"Date\" DESC LIMIT 1",
-                new { message.DownloadId, EventType = DownloadHistoryEventType.DownloadGrabbed }, transaction);
+                new { message.DownloadId, EventType = DownloadHistoryEventType.DownloadGrabbed },
+                transaction);
             var tracked = message.TrackedDownload;
             var data = new Dictionary<string, string>
             {
@@ -202,20 +202,23 @@ namespace NzbDrone.Core.Messaging.Events
             var historySql = "INSERT INTO \"History\" (\"SeriesId\", \"EpisodeId\", \"MovieId\", \"MediaType\", \"EventType\", \"Date\", \"Quality\", \"Languages\", \"SourceTitle\", \"DownloadId\", \"Data\") VALUES (@SeriesId, @EpisodeId, @MovieId, @MediaType, @EventType, @Date, @Quality, @Languages, @SourceTitle, @DownloadId, @Data)";
             foreach (var episodeId in message.MovieId > 0 ? new[] { 0 }.AsEnumerable() : message.EpisodeIds.AsEnumerable())
             {
-                connection.Execute(historySql, new
-                {
-                    message.SeriesId,
-                    EpisodeId = episodeId,
-                    message.MovieId,
-                    MediaType = message.MovieId > 0 ? MediaType.Movie : MediaType.Series,
-                    EventType = message.MovieId > 0 ? (int)MovieHistoryEventType.DownloadFailed : (int)EpisodeHistoryEventType.DownloadFailed,
-                    Date = date,
-                    message.Quality,
-                    message.Languages,
-                    message.SourceTitle,
-                    message.DownloadId,
-                    Data = data
-                }, transaction);
+                connection.Execute(
+                    historySql,
+                    new
+                    {
+                        message.SeriesId,
+                        EpisodeId = episodeId,
+                        message.MovieId,
+                        MediaType = message.MovieId > 0 ? MediaType.Movie : MediaType.Series,
+                        EventType = message.MovieId > 0 ? (int)MovieHistoryEventType.DownloadFailed : (int)EpisodeHistoryEventType.DownloadFailed,
+                        Date = date,
+                        message.Quality,
+                        message.Languages,
+                        message.SourceTitle,
+                        message.DownloadId,
+                        Data = data
+                    },
+                    transaction);
             }
 
             var downloadHistory = new DownloadHistory

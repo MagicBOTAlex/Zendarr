@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System.Collections.Generic;
+using System.IO;
 using FizzWare.NBuilder;
 using Moq;
 using NUnit.Framework;
@@ -38,6 +39,10 @@ namespace NzbDrone.Core.Test.MediaFiles.MediaFileDeletionService
             Mocker.GetMock<IDiskProvider>()
                   .Setup(s => s.GetParentFolder(_episodeFile.Path))
                   .Returns(_series.Path);
+
+            Mocker.GetMock<IMediaFileService>()
+                  .Setup(s => s.GetFilesBySeries(It.IsAny<int>()))
+                  .Returns(new List<EpisodeFile>());
         }
 
         private void GivenRootFolderExists()

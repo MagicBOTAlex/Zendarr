@@ -11,8 +11,11 @@ namespace NzbDrone.Core.Download
         public List<DownloadDecision> Failed { get; set; }
         public List<DownloadDecision> Skipped { get; set; }
 
-        public ProcessedDecisions(List<DownloadDecision> grabbed, List<DownloadDecision> pending, List<DownloadDecision> rejected,
-                                  List<DownloadDecision> failed = null, List<DownloadDecision> skipped = null)
+        public ProcessedDecisions(List<DownloadDecision> grabbed,
+                                  List<DownloadDecision> pending,
+                                  List<DownloadDecision> rejected,
+                                  List<DownloadDecision> failed = null,
+                                  List<DownloadDecision> skipped = null)
         {
             Grabbed = grabbed;
             Pending = pending;

@@ -22,6 +22,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 }
             }
         }
+
         public TrackedDownloadStatus Status { get; private set; }
         public RemoteEpisode RemoteEpisode { get; set; }
         public RemoteMovie RemoteMovie { get; set; }

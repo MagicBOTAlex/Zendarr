@@ -232,9 +232,18 @@ namespace NzbDrone.Core.Tv
             series.AddOptions = storedSeries.AddOptions;
             UpdateAutoTaggingTags(series);
 
-            _seriesRepository.SetFields(series, s => s.TvdbId, s => s.Seasons, s => s.Path, s => s.QualityProfileId,
-                s => s.SeasonFolder, s => s.Monitored, s => s.MonitorNewItems, s => s.SeriesType,
-                s => s.RootFolderPath, s => s.Tags, s => s.UseSceneNumbering);
+            _seriesRepository.SetFields(series,
+                s => s.TvdbId,
+                s => s.Seasons,
+                s => s.Path,
+                s => s.QualityProfileId,
+                s => s.SeasonFolder,
+                s => s.Monitored,
+                s => s.MonitorNewItems,
+                s => s.SeriesType,
+                s => s.RootFolderPath,
+                s => s.Tags,
+                s => s.UseSceneNumbering);
             var updatedSeries = GetSeries(series.Id);
             if (publishUpdatedEvent)
             {
@@ -266,9 +275,17 @@ namespace NzbDrone.Core.Tv
                 UpdateAutoTaggingTags(s);
             }
 
-            _seriesRepository.SetFields(series, s => s.Seasons, s => s.Path, s => s.QualityProfileId,
-                s => s.SeasonFolder, s => s.Monitored, s => s.MonitorNewItems, s => s.SeriesType,
-                s => s.RootFolderPath, s => s.Tags, s => s.UseSceneNumbering);
+            _seriesRepository.SetFields(series,
+                s => s.Seasons,
+                s => s.Path,
+                s => s.QualityProfileId,
+                s => s.SeasonFolder,
+                s => s.Monitored,
+                s => s.MonitorNewItems,
+                s => s.SeriesType,
+                s => s.RootFolderPath,
+                s => s.Tags,
+                s => s.UseSceneNumbering);
             _logger.Debug("{0} series updated", series.Count);
             _eventAggregator.PublishEvent(new SeriesBulkEditedEvent(series));
 
@@ -278,13 +295,34 @@ namespace NzbDrone.Core.Tv
         public Series UpdateSeriesMetadata(Series series)
         {
             // Metadata refreshes must not overwrite settings or a concurrently marked status.
-            _seriesRepository.SetFields(series, s => s.TvdbId, s => s.Title, s => s.Year,
-                s => s.TitleSlug, s => s.TvRageId, s => s.TvMazeId, s => s.TmdbId,
-                s => s.ImdbId, s => s.MalIds, s => s.AniListIds, s => s.AirTime,
-                s => s.Overview, s => s.OriginalLanguage, s => s.CleanTitle, s => s.SortTitle,
-                s => s.LastInfoSync, s => s.Runtime, s => s.Images, s => s.Network,
-                s => s.FirstAired, s => s.LastAired, s => s.Ratings, s => s.Actors,
-                s => s.Genres, s => s.Certification, s => s.OriginalCountry, s => s.Seasons);
+            _seriesRepository.SetFields(series,
+                s => s.TvdbId,
+                s => s.Title,
+                s => s.Year,
+                s => s.TitleSlug,
+                s => s.TvRageId,
+                s => s.TvMazeId,
+                s => s.TmdbId,
+                s => s.ImdbId,
+                s => s.MalIds,
+                s => s.AniListIds,
+                s => s.AirTime,
+                s => s.Overview,
+                s => s.OriginalLanguage,
+                s => s.CleanTitle,
+                s => s.SortTitle,
+                s => s.LastInfoSync,
+                s => s.Runtime,
+                s => s.Images,
+                s => s.Network,
+                s => s.FirstAired,
+                s => s.LastAired,
+                s => s.Ratings,
+                s => s.Actors,
+                s => s.Genres,
+                s => s.Certification,
+                s => s.OriginalCountry,
+                s => s.Seasons);
 
             return UpdateSeriesStatus(series.Id, series.Status);
         }

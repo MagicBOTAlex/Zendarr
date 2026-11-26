@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Data.SQLite;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Dapper;
 using FluentAssertions;
 using Moq;
 using NUnit.Framework;
@@ -11,6 +13,7 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Datastore.Converters;
 using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.MediaFiles;
@@ -27,6 +30,7 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
     {
         private TranscodeJob _job;
         private TranscodeDevice _device;
+        private string _dbFile;
 
         [SetUp]
         public void Setup()
@@ -107,6 +111,61 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
 
                       return plan;
                   });
+
+            SqlMapper.AddTypeHandler(new EmbeddedDocumentConverter<MediaInfoModel>());
+
+            _dbFile = Path.Combine(Path.GetTempPath(), $"zendarr-transcode-{Guid.NewGuid():N}.db");
+
+            using (var connection = new SQLiteConnection($"Data Source={_dbFile}"))
+            {
+                connection.Open();
+
+                using var command = connection.CreateCommand();
+
+                command.CommandText = @"
+CREATE TABLE ""EpisodeFiles"" (""Id"" INTEGER PRIMARY KEY, ""Size"" INTEGER, ""MediaInfo"" TEXT, ""OriginalFilePath"" TEXT, ""RelativePath"" TEXT);
+CREATE TABLE ""MovieFiles"" (""Id"" INTEGER PRIMARY KEY, ""Size"" INTEGER, ""MediaInfo"" TEXT, ""OriginalFilePath"" TEXT, ""RelativePath"" TEXT);
+CREATE TABLE ""TranscodeJobs"" (""Id"" INTEGER PRIMARY KEY, ""Status"" INTEGER, ""Progress"" INTEGER, ""Error"" TEXT, ""OriginalPath"" TEXT, ""EndedAt"" TEXT, ""LastUpdatedAt"" TEXT);
+INSERT INTO ""EpisodeFiles"" VALUES (10, 1000000, '{}', NULL, 'episode.mkv');
+INSERT INTO ""EpisodeFiles"" VALUES (11, 1000000, '{}', NULL, 'episode2.mkv');
+INSERT INTO ""EpisodeFiles"" VALUES (20, 1000000, '{}', NULL, 'other.mkv');
+INSERT INTO ""TranscodeJobs"" VALUES (1, 7, 0, NULL, NULL, NULL, NULL);
+INSERT INTO ""TranscodeJobs"" VALUES (2, 7, 0, NULL, NULL, NULL, NULL);
+INSERT INTO ""TranscodeJobs"" VALUES (65, 7, 0, NULL, NULL, NULL, NULL);";
+
+                command.ExecuteNonQuery();
+            }
+
+            Mocker.GetMock<IMainDatabase>()
+                  .Setup(d => d.OpenConnection())
+                  .Returns(() =>
+                  {
+                      var connection = new SQLiteConnection($"Data Source={_dbFile}");
+                      connection.Open();
+                      return connection;
+                  });
+        }
+
+        [TearDown]
+        public void CleanupDatabase()
+        {
+            SQLiteConnection.ClearAllPools();
+
+            try
+            {
+                File.Delete(_dbFile);
+            }
+            catch (IOException)
+            {
+            }
+        }
+
+        private string GetStoredRelativePath(int fileId)
+        {
+            using var connection = new SQLiteConnection($"Data Source={_dbFile}");
+            connection.Open();
+
+            return connection.ExecuteScalar<string>("SELECT \"RelativePath\" FROM \"EpisodeFiles\" WHERE \"Id\" = @FileId", new { FileId = fileId });
         }
 
         [Test]
@@ -405,6 +464,14 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
                   .Setup(repository => repository.Get(2))
                   .Returns(second);
 
+            Mocker.GetMock<ITranscodeJobRepository>()
+                  .Setup(repository => repository.Find(2))
+                  .Returns(second);
+
+            Mocker.GetMock<IMediaFileService>()
+                  .Setup(service => service.Get(11))
+                  .Returns(new EpisodeFile { Id = 11, RelativePath = "episode2.mkv", Size = 1_000_000 });
+
             Mocker.GetMock<IDiskProvider>()
                   .Setup(disk => disk.FileExists(second.OutputPath))
                   .Returns(true);
@@ -430,7 +497,7 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
         }
 
         [Test]
-        public void cancel_should_abort_a_transferring_job_and_keep_the_output_for_review()
+        public void cancel_should_abort_a_transferring_job_and_persist_cancellation()
         {
             GivenReviewableJob();
 
@@ -453,10 +520,10 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
 
             Subject.CancelJob(1);
 
-            // The abort returns the job to review with the finished output kept, and the in-flight
-            // resolve observes the cancellation instead of finalizing the (partial) copy.
-            SpinWait.SpinUntil(() => _job.Status == TranscodeJobStatus.AwaitingReview, TimeSpan.FromSeconds(5)).Should().BeTrue();
-            _job.Error.Should().Contain("cancelled");
+            // The cancellation is persisted before the token is signalled, and the in-flight resolve
+            // observes the cancellation instead of finalizing the (partial) copy.
+            SpinWait.SpinUntil(() => _job.Status == TranscodeJobStatus.Cancelled, TimeSpan.FromSeconds(5)).Should().BeTrue();
+            _job.Status.Should().Be(TranscodeJobStatus.Cancelled);
 
             SpinWait.SpinUntil(() => resolve.IsCompleted, TimeSpan.FromSeconds(5)).Should().BeTrue();
             resolve.IsFaulted.Should().BeTrue();
@@ -487,7 +554,7 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
             Mocker.GetMock<IDiskTransferService>()
                   .Verify(transfer => transfer.TransferFile(staging, destination, TransferMode.Move, true), Times.Once);
 
-            episodeFile.RelativePath.Should().Be("episode.mkv");
+            GetStoredRelativePath(10).Should().Be("episode.mkv");
         }
 
         [Test]
@@ -520,7 +587,7 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
             Mocker.GetMock<IDiskTransferService>()
                   .Verify(transfer => transfer.TransferFile(staging, destination, TransferMode.Move, true), Times.Once);
 
-            episodeFile.RelativePath.Should().Be(@"Season 1\episode [Transcoded].mkv".AsOsAgnostic());
+            GetStoredRelativePath(10).Should().Be(@"Season 1\episode [Transcoded].mkv".AsOsAgnostic());
         }
 
         [Test]
@@ -575,12 +642,18 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
         {
             GivenReviewableJob();
 
-            var job = Subject.Resolve(1, TranscodeReviewAction.Discard);
-
-            job.Status.Should().Be(TranscodeJobStatus.Completed);
+            var jobFolder = Path.Combine(@"C:\appdata".AsOsAgnostic(), "transcode", "1");
 
             Mocker.GetMock<IDiskProvider>()
-                  .Verify(disk => disk.DeleteFile(_job.OutputPath), Times.Once);
+                  .Setup(disk => disk.FolderExists(jobFolder))
+                  .Returns(true);
+
+            var job = Subject.Resolve(1, TranscodeReviewAction.Discard);
+
+            job.Status.Should().Be(TranscodeJobStatus.Cancelled);
+
+            Mocker.GetMock<IDiskProvider>()
+                  .Verify(disk => disk.DeleteFolder(jobFolder, true), Times.Once);
 
             Mocker.GetMock<IDiskTransferService>()
                   .Verify(transfer => transfer.TransferFile(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TransferMode>(), It.IsAny<bool>()), Times.Never);
@@ -1643,13 +1716,20 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
 
             using var watcherEnteredFind = new ManualResetEventSlim(false);
             using var releaseWatcher = new ManualResetEventSlim(false);
+            var findCalls = 0;
 
             Mocker.GetMock<ITranscodeJobRepository>()
                   .Setup(repository => repository.Find(1))
                   .Returns(() =>
                   {
-                      watcherEnteredFind.Set();
-                      releaseWatcher.Wait(TimeSpan.FromSeconds(10));
+                      // The resolve reads the row before/after the copy; only the watcher's read
+                      // (the second call) is held to simulate a stuck repository call.
+                      if (Interlocked.Increment(ref findCalls) == 2)
+                      {
+                          watcherEnteredFind.Set();
+                          releaseWatcher.Wait(TimeSpan.FromSeconds(10));
+                      }
+
                       return _job;
                   });
 
@@ -1740,6 +1820,8 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Running)).Returns(new List<TranscodeJob>());
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Transferring)).Returns(new List<TranscodeJob> { hostile, recoverable });
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Queued)).Returns(new List<TranscodeJob>());
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(7)).Returns(hostile);
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(8)).Returns(recoverable);
 
             Mocker.GetMock<IDiskProvider>().Setup(disk => disk.FileExists(recoverable.OutputPath)).Returns(true);
 
@@ -1812,6 +1894,8 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
 
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Running)).Returns(new List<TranscodeJob> { bad, good });
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Transferring)).Returns(new List<TranscodeJob>());
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(1)).Returns(bad);
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(2)).Returns(good);
 
             Mocker.GetMock<ITranscodeJobRepository>()
                   .Setup(repository => repository.Update(It.Is<TranscodeJob>(job => job.Id == 1)))
@@ -1837,6 +1921,7 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
 
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Running)).Returns(new List<TranscodeJob> { stranded });
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Transferring)).Returns(new List<TranscodeJob>());
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(1)).Returns(stranded);
 
             Subject.StrandedJobGrace = TimeSpan.FromMinutes(1);
             Subject.ReconcileStrandedJobs();
@@ -1878,6 +1963,7 @@ namespace NzbDrone.Core.Test.MediaFiles.Transcoding
 
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Running)).Returns(new List<TranscodeJob>());
             Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Transferring)).Returns(new List<TranscodeJob> { stranded });
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(1)).Returns(stranded);
             Mocker.GetMock<IDiskProvider>().Setup(disk => disk.FileExists(stranded.OutputPath)).Returns(true);
 
             Subject.StrandedJobGrace = TimeSpan.FromMinutes(1);

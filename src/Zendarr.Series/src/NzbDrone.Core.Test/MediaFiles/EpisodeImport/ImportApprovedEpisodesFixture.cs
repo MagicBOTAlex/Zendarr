@@ -73,6 +73,10 @@ namespace NzbDrone.Core.Test.MediaFiles.EpisodeImport
                 .Setup(x => x.FindByDownloadId(It.IsAny<string>()))
                 .Returns(new List<EpisodeHistory>());
 
+            Mocker.GetMock<IMediaFileService>()
+                .Setup(s => s.GetFilesWithRelativePath(It.IsAny<int>(), It.IsAny<string>()))
+                .Returns(new List<EpisodeFile>());
+
             _downloadClientItem = Builder<DownloadClientItem>.CreateNew()
                 .With(d => d.OutputPath = new OsPath(outputPath))
                 .Build();
