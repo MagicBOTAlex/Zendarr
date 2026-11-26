@@ -1,3 +1,5 @@
+using System;
+using System.Linq.Expressions;
 using FizzWare.NBuilder;
 using Moq;
 using NUnit.Framework;
@@ -25,7 +27,9 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
             Subject.Clean();
 
             Mocker.GetMock<ISeriesRepository>()
-                .Verify(v => v.Update(It.Is<Series>(s => s.CleanTitle == "fulltitle")), Times.Once());
+                .Verify(v => v.SetFields(It.Is<Series>(s => s.CleanTitle == "fulltitle"),
+                                         It.IsAny<Expression<Func<Series, object>>[]>()),
+                        Times.Once());
         }
 
         [Test]
@@ -43,7 +47,9 @@ namespace NzbDrone.Core.Test.Housekeeping.Housekeepers
             Subject.Clean();
 
             Mocker.GetMock<ISeriesRepository>()
-                .Verify(v => v.Update(It.Is<Series>(s => s.CleanTitle == "fulltitle")), Times.Never());
+                .Verify(v => v.SetFields(It.IsAny<Series>(),
+                                         It.IsAny<Expression<Func<Series, object>>[]>()),
+                        Times.Never());
         }
     }
 }

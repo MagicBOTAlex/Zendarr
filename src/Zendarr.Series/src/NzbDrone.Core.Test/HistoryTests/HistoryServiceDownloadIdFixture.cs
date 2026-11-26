@@ -89,6 +89,7 @@ namespace NzbDrone.Core.Test.HistoryTests
             {
                 Id = TestEpisodeFileId,
                 SeriesId = TestSeriesId,
+                Path = "/series/show/Season 1/Show - S01E01.mkv",
                 RelativePath = "Season 1/Show - S01E01.mkv",
                 Quality = new QualityModel(),
                 Languages = new List<Language> { Language.English },

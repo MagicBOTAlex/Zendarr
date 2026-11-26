@@ -66,7 +66,8 @@ namespace NzbDrone.Core.Test.Messaging.Commands
 
             Mocker.GetMock<ICommandRepository>()
                   .Verify(v => v.End(It.Is<CommandModel>(c => c.Status == CommandStatus.Cancelled &&
-                                                              c.EndedAt.HasValue)), Times.Once());
+                                                              c.EndedAt.HasValue)),
+                          Times.Once());
             Subject.All().Should().BeEmpty();
         }
 

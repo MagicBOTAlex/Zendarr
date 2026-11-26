@@ -36,7 +36,8 @@ namespace NzbDrone.Core.Test.Download.DownloadHistoryTests
                   .Verify(v => v.Insert(It.Is<DownloadHistory>(h =>
                       h.EventType == DownloadHistoryEventType.DownloadIgnored &&
                       h.DownloadId == "abc123" &&
-                      h.SourceTitle == "Series.S01E01.1080p")), Times.Once());
+                      h.SourceTitle == "Series.S01E01.1080p")),
+                      Times.Once());
         }
 
         [Test]

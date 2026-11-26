@@ -156,7 +156,7 @@ public class EpisodeFileController : RestControllerWithSignalR<EpisodeFileResour
         return TypedResults.NoContent();
     }
 
-    private void ValidateNoSharedPaths(List<EpisodeFile> episodeFiles, Dictionary<int, Series> seriesById)
+    private void ValidateNoSharedPaths(List<EpisodeFile> episodeFiles, Dictionary<int, NzbDrone.Core.Tv.Series> seriesById)
     {
         var seriesFiles = new Dictionary<int, List<EpisodeFile>>();
         var conflicts = new List<string>();
