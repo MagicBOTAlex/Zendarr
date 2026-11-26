@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using FizzWare.NBuilder;
 using FluentAssertions;
 using Moq;
@@ -496,6 +497,63 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
 
             _trackedDownload.State.Should().Be(TrackedDownloadState.ImportBlocked);
             _trackedDownload.ImportAttempts.Should().Be(1);
+        }
+
+        [Test]
+        public void should_fail_download_when_a_dangerous_file_is_rejected_in_a_multi_file_import()
+        {
+            Mocker.GetMock<IDownloadedEpisodesImportService>()
+                  .Setup(v => v.ProcessPath(It.IsAny<string>(), It.IsAny<ImportMode>(), It.IsAny<Series>(), It.IsAny<DownloadClientItem>()))
+                  .Returns(new List<ImportResult>
+                           {
+                               new ImportResult(
+                                   new ImportDecision(
+                                       new LocalEpisode { Path = @"C:\TestPath\Droned.S01E01.mkv", Episodes = { _episode1 } },
+                                       new ImportRejection(ImportRejectionReason.Unknown, "Rejected!")),
+                                   "Test Failure"),
+
+                               new ImportResult(
+                                   new ImportDecision(
+                                       new LocalEpisode { Path = @"C:\TestPath\Droned.exe" },
+                                       new ImportRejection(ImportRejectionReason.DangerousFile, "Caution: Found potentially dangerous file with extension: .exe")),
+                                   "Caution: Found potentially dangerous file with extension: .exe")
+                           });
+
+            Mocker.GetMock<IRejectedImportService>()
+                  .Setup(s => s.Process(It.IsAny<TrackedDownload>(), It.IsAny<ImportResult>()))
+                  .Returns((TrackedDownload trackedDownload, ImportResult importResult) =>
+                  {
+                      if (importResult.ImportDecision.Rejections.Any(r => r.Reason == ImportRejectionReason.DangerousFile))
+                      {
+                          trackedDownload.Fail();
+                          return true;
+                      }
+
+                      return false;
+                  });
+
+            Subject.Import(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
+
+            Mocker.GetMock<IEventAggregator>()
+                  .Verify(v => v.PublishEvent(It.IsAny<ManualInteractionRequiredEvent>()), Times.Never());
+        }
+
+        [Test]
+        public void should_fail_download_when_still_warned_after_max_attempts()
+        {
+            _trackedDownload.ImportAttempts = 2;
+            _trackedDownload.DownloadItem.Category = "tv";
+
+            Mocker.GetMock<IParsingService>()
+                  .Setup(s => s.GetSeries(It.IsAny<string>()))
+                  .Returns((Series)null);
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
+            _trackedDownload.ImportAttempts.Should().Be(3);
         }
 
         private void AssertNotImported()

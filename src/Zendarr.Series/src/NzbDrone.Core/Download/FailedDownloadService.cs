@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using NLog;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download.TrackedDownloads;
@@ -21,15 +22,20 @@ namespace NzbDrone.Core.Download
 
     public class FailedDownloadService : IFailedDownloadService
     {
+        private const int MaxImportAttempts = 3;
+
         private readonly IHistoryService _historyService;
         private readonly IEventAggregator _eventAggregator;
+        private readonly Logger _logger;
 
         public FailedDownloadService(IHistoryService historyService,
                                      ITrackedDownloadService trackedDownloadService,
-                                     IEventAggregator eventAggregator)
+                                     IEventAggregator eventAggregator,
+                                     Logger logger)
         {
             _historyService = historyService;
             _eventAggregator = eventAggregator;
+            _logger = logger;
         }
 
         public void MarkAsFailed(int historyId, string message, string source = null, bool skipRedownload = false)
@@ -137,8 +143,10 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
-            if (trackedDownload.DownloadItem.IsEncrypted ||
-                trackedDownload.DownloadItem.Status == DownloadItemStatus.Failed)
+            var downloadIsFailed = trackedDownload.DownloadItem.IsEncrypted ||
+                                   trackedDownload.DownloadItem.Status == DownloadItemStatus.Failed;
+
+            if (downloadIsFailed)
             {
                 if (trackedDownload.RemoteMovie != null)
                 {
@@ -147,6 +155,7 @@ namespace NzbDrone.Core.Download
                     if (grabbedMovieItems.Empty())
                     {
                         trackedDownload.Warn(trackedDownload.DownloadItem.IsEncrypted ? $"Download is encrypted and wasn't grabbed by {BuildInfo.AppName}, skipping automatic download handling" : $"Download has failed wasn't grabbed by {BuildInfo.AppName}, skipping automatic download handling");
+                        CountUnsuccessfulCheck(trackedDownload);
                         return;
                     }
 
@@ -160,10 +169,29 @@ namespace NzbDrone.Core.Download
                 if (grabbedItems.Empty())
                 {
                     trackedDownload.Warn(trackedDownload.DownloadItem.IsEncrypted ? $"Download is encrypted and wasn't grabbed by {BuildInfo.AppName}, skipping automatic download handling" : $"Download has failed wasn't grabbed by {BuildInfo.AppName}, skipping automatic download handling");
+                    CountUnsuccessfulCheck(trackedDownload);
                     return;
                 }
 
                 trackedDownload.State = TrackedDownloadState.FailedPending;
+            }
+        }
+
+        // A failed/encrypted download that was not grabbed by the app can only be warned about,
+        // and that warning would otherwise have no consumer: the item would stay in the queue
+        // forever. Count every pass against the retry budget and fail it once the budget is
+        // spent so the download reaches a terminal state.
+        private void CountUnsuccessfulCheck(TrackedDownload trackedDownload)
+        {
+            trackedDownload.ImportAttempts++;
+
+            if (trackedDownload.ImportAttempts >= MaxImportAttempts)
+            {
+                _logger.Debug("Download '{0}' is still unhandled after {1} checks, marking as failed",
+                    trackedDownload.DownloadItem.Title,
+                    trackedDownload.ImportAttempts);
+
+                trackedDownload.Fail();
             }
         }
 
@@ -180,6 +208,8 @@ namespace NzbDrone.Core.Download
 
                 if (grabbedMovieItems.Empty())
                 {
+                    _logger.Debug("Download '{0}' has no grabbed history and cannot be marked as failed through history, marking it failed anyway", trackedDownload.DownloadItem.Title);
+                    trackedDownload.State = TrackedDownloadState.Failed;
                     return;
                 }
 
@@ -204,6 +234,8 @@ namespace NzbDrone.Core.Download
 
             if (grabbedItems.Empty())
             {
+                _logger.Debug("Download '{0}' has no grabbed history and cannot be marked as failed through history, marking it failed anyway", trackedDownload.DownloadItem.Title);
+                trackedDownload.State = TrackedDownloadState.Failed;
                 return;
             }
 

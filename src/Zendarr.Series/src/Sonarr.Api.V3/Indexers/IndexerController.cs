@@ -1,4 +1,5 @@
 using FluentValidation;
+using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Validation;
 using NzbDrone.SignalR;
@@ -14,14 +15,37 @@ namespace Sonarr.Api.V3.Indexers
         public static readonly IndexerResourceMapper ResourceMapper = new();
         public static readonly IndexerBulkResourceMapper BulkResourceMapper = new();
 
+        private readonly IIndexerFactory _indexerFactory;
+        private readonly IIndexerStatusService _indexerStatusService;
+
         public IndexerController(IBroadcastSignalRMessage signalRBroadcaster,
             IndexerFactory indexerFactory,
+            IIndexerStatusService indexerStatusService,
             DownloadClientExistsValidator downloadClientExistsValidator)
             : base(signalRBroadcaster, indexerFactory, "indexer", ResourceMapper, BulkResourceMapper)
         {
+            _indexerFactory = indexerFactory;
+            _indexerStatusService = indexerStatusService;
+
             SharedValidator.RuleFor(c => c.Priority).InclusiveBetween(1, 50);
             SharedValidator.RuleFor(c => c.SeasonSearchMaximumSingleEpisodeAge).GreaterThanOrEqualTo(0);
             SharedValidator.RuleFor(c => c.DownloadClientId).SetValidator(downloadClientExistsValidator);
+        }
+
+        // Operator escape hatch: testing a provider no longer records status (a test must not clear a
+        // backoff by accident), so a provider blocked until DisabledTill needs an explicit clear.
+        [HttpPost("{id:int}/reset")]
+        [Produces("application/json")]
+        public ActionResult Reset(int id)
+        {
+            if (!_indexerFactory.Exists(id))
+            {
+                return NotFound();
+            }
+
+            _indexerStatusService.Reset(id);
+
+            return NoContent();
         }
 
         protected override bool IsFieldVisible(Field field, AppSubsystem subsystem)

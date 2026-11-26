@@ -44,6 +44,7 @@ namespace NzbDrone.Core.Download
             var rejected = decisions.Where(d => d.Rejected).ToList();
             var failed = new List<DownloadDecision>();
             var skipped = new List<DownloadDecision>();
+            var retry = new List<DownloadDecision>();
 
             var pendingAddQueue = new List<Tuple<DownloadDecision, PendingReleaseReason>>();
 
@@ -63,14 +64,14 @@ namespace NzbDrone.Core.Download
 
                 if (report.TemporarilyRejected)
                 {
-                    PreparePending(pendingAddQueue, grabbed, pending, report, PendingReleaseReason.Delay);
+                    PreparePending(pendingAddQueue, grabbed, pending, retry, report, PendingReleaseReason.Delay);
                     continue;
                 }
 
                 if ((downloadProtocol == DownloadProtocol.Usenet && usenetFailed) ||
                     (downloadProtocol == DownloadProtocol.Torrent && torrentFailed))
                 {
-                    PreparePending(pendingAddQueue, grabbed, pending, report, PendingReleaseReason.DownloadClientUnavailable);
+                    PreparePending(pendingAddQueue, grabbed, pending, retry, report, PendingReleaseReason.DownloadClientUnavailable);
                     continue;
                 }
 
@@ -86,7 +87,7 @@ namespace NzbDrone.Core.Download
 
                     case ProcessedDecisionResult.Pending:
                         {
-                            PreparePending(pendingAddQueue, grabbed, pending, report, PendingReleaseReason.Delay);
+                            PreparePending(pendingAddQueue, grabbed, pending, retry, report, PendingReleaseReason.Delay);
                             break;
                         }
 
@@ -99,7 +100,11 @@ namespace NzbDrone.Core.Download
                     case ProcessedDecisionResult.Failed:
                         {
                             failed.Add(report);
-                            PreparePending(pendingAddQueue, grabbed, pending, report, PendingReleaseReason.DownloadClientUnavailable);
+
+                            // The decision failed to reach a download client, so it goes in Failed only.
+                            // Queue it for a later retry (and record it in Retry) without also listing it
+                            // as Pending, which keeps the outcome lists mutually exclusive.
+                            PrepareRetry(pendingAddQueue, grabbed, pending, retry, report, PendingReleaseReason.DownloadClientUnavailable);
 
                             if (downloadProtocol == DownloadProtocol.Usenet)
                             {
@@ -129,7 +134,7 @@ namespace NzbDrone.Core.Download
                 _pendingReleaseService.AddMany(pendingAddQueue);
             }
 
-            return new ProcessedDecisions(grabbed, pending, rejected, failed, skipped);
+            return new ProcessedDecisions(grabbed, pending, rejected, failed, skipped, retry);
         }
 
         public async Task<ProcessedDecisionResult> ProcessDecision(DownloadDecision decision, int? downloadClientId)
@@ -219,7 +224,7 @@ namespace NzbDrone.Core.Download
                             .Contains(movieId);
         }
 
-        private void PreparePending(List<Tuple<DownloadDecision, PendingReleaseReason>> queue, List<DownloadDecision> grabbed, List<DownloadDecision> pending, DownloadDecision report, PendingReleaseReason reason)
+        private void PreparePending(List<Tuple<DownloadDecision, PendingReleaseReason>> queue, List<DownloadDecision> grabbed, List<DownloadDecision> pending, List<DownloadDecision> retry, DownloadDecision report, PendingReleaseReason reason)
         {
             // If a release was already grabbed with matching subject we should store it as a fallback
             // and filter it out the next time it is processed.
@@ -227,14 +232,32 @@ namespace NzbDrone.Core.Download
             // was sent to another client we still list it normally so it apparent that it'll grab next time.
             // Delayed is treated the same, but only the first is listed the subsequent items as stored as Fallback.
 
+            queue.Add(Tuple.Create(report, GetPendingReason(grabbed, pending, retry, report, reason)));
+            pending.Add(report);
+        }
+
+        private void PrepareRetry(List<Tuple<DownloadDecision, PendingReleaseReason>> queue, List<DownloadDecision> grabbed, List<DownloadDecision> pending, List<DownloadDecision> retry, DownloadDecision report, PendingReleaseReason reason)
+        {
+            // Same queueing as PreparePending, but the report is recorded as retried instead of pending
+            // so that Failed and Pending stay mutually exclusive.
+
+            queue.Add(Tuple.Create(report, GetPendingReason(grabbed, pending, retry, report, reason)));
+            retry.Add(report);
+        }
+
+        private PendingReleaseReason GetPendingReason(List<DownloadDecision> grabbed, List<DownloadDecision> pending, List<DownloadDecision> retry, DownloadDecision report, PendingReleaseReason reason)
+        {
+            // Retried reports count towards the fallback check even though they are not listed as pending,
+            // so the queued reason is the same as it was before Failed and Pending became disjoint.
+
             if (IsProcessed(grabbed, report) ||
-                IsProcessed(pending, report))
+                IsProcessed(pending, report) ||
+                IsProcessed(retry, report))
             {
-                reason = PendingReleaseReason.Fallback;
+                return PendingReleaseReason.Fallback;
             }
 
-            queue.Add(Tuple.Create(report, reason));
-            pending.Add(report);
+            return reason;
         }
 
         private async Task<ProcessedDecisionResult> ProcessDecisionInternal(DownloadDecision decision, int? downloadClientId = null)

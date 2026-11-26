@@ -247,6 +247,25 @@ public class SeriesController : RestControllerWithSignalR<SeriesResource, NzbDro
         }
     }
 
+    [HttpPut("{id:int}/status")]
+    [Consumes("application/json")]
+    [Produces("application/json")]
+    public Results<Ok<SeriesResource>, NotFound> RestoreSeries([FromRoute] int id, [FromBody] SeriesStatusResource? statusResource)
+    {
+        ValidateId(id);
+
+        var status = statusResource?.Status;
+
+        if (status == null)
+        {
+            throw new BadRequestException("A status is required");
+        }
+
+        var series = _seriesService.RestoreSeries(id, status.Value);
+
+        return TypedResults.Ok(GetSeriesResource(series, false)!);
+    }
+
     [RestDeleteById]
     public NoContent DeleteSeries(int id, bool deleteFiles = false, bool addImportListExclusion = false)
     {
@@ -421,4 +440,9 @@ public class SeriesController : RestControllerWithSignalR<SeriesResource, NzbDro
             BroadcastResourceChange(ModelAction.Updated, message.Series.Id);
         }
     }
+}
+
+public class SeriesStatusResource
+{
+    public SeriesStatusType? Status { get; set; }
 }

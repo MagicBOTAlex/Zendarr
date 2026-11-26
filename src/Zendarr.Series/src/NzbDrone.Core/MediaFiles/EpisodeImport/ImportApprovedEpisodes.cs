@@ -13,6 +13,7 @@ using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Core.Tv;
 
 namespace NzbDrone.Core.MediaFiles.EpisodeImport
 {
@@ -142,9 +143,31 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport
                         oldFiles = _episodeFileUpgrader.UpgradeEpisodeFile(episodeFile, localEpisode, copyOnly).OldFiles;
 
                         // The destination path is only known after the upgrader has moved the file.
-                        // Do not create a second record if another episode already owns that path.
-                        if (_mediaFileService.GetFilesWithRelativePath(localEpisode.Series.Id, episodeFile.RelativePath).Any())
+                        // A batch can map more than one decision to the same path; the path is
+                        // unique, so do not create a second record. The episodes of this decision
+                        // still belong to the file that now sits at that path, so link them to the
+                        // existing record instead of leaving them fileless.
+                        var existingFile = _mediaFileService.GetFilesWithRelativePath(localEpisode.Series.Id, episodeFile.RelativePath).FirstOrDefault();
+
+                        if (existingFile != null)
                         {
+                            var existingEpisodes = existingFile.Episodes?.Value ?? new List<Episode>();
+                            var linkedEpisodeIds = existingEpisodes.Select(e => e.Id).ToHashSet();
+                            var unlinkedEpisodes = localEpisode.Episodes.Where(e => !linkedEpisodeIds.Contains(e.Id)).ToList();
+
+                            if (unlinkedEpisodes.Any())
+                            {
+                                existingEpisodes.AddRange(unlinkedEpisodes);
+                                existingFile.Episodes = existingEpisodes;
+
+                                // EpisodeService attaches every episode on the file to it when this
+                                // event is handled, which is how a normal import links episodes.
+                                _eventAggregator.PublishEvent(new EpisodeFileAddedEvent(existingFile));
+                            }
+
+                            // Keep the decision reported as skipped (same as the
+                            // DestinationAlreadyExists handler); only the fileless episodes are
+                            // reconciled here.
                             importResults.Add(new ImportResult(importDecision, "An episode file already exists at the destination path"));
                             continue;
                         }

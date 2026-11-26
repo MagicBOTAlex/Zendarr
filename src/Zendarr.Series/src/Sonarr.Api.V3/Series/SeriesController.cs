@@ -208,6 +208,25 @@ namespace Sonarr.Api.V3.Series
             return Accepted(seriesResource.Id);
         }
 
+        [HttpPut("{id:int}/status")]
+        [Consumes("application/json")]
+        [Produces("application/json")]
+        public ActionResult<SeriesResource> RestoreSeries([FromRoute] int id, [FromBody] SeriesStatusResource statusResource)
+        {
+            ValidateId(id);
+
+            var status = statusResource?.Status;
+
+            if (status == null)
+            {
+                throw new BadRequestException("A status is required");
+            }
+
+            var series = _seriesService.RestoreSeries(id, status.Value);
+
+            return Ok(GetSeriesResource(series, false));
+        }
+
         [RestDeleteById]
         public void DeleteSeries(int id, bool deleteFiles = false, bool addImportListExclusion = false, bool addImportExclusion = false)
         {
@@ -360,5 +379,10 @@ namespace Sonarr.Api.V3.Series
                 BroadcastResourceChange(ModelAction.Updated, message.Series.Id);
             }
         }
+    }
+
+    public class SeriesStatusResource
+    {
+        public SeriesStatusType? Status { get; set; }
     }
 }

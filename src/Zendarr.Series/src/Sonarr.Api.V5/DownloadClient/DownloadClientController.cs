@@ -1,4 +1,6 @@
 using FluentValidation;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Download;
 using NzbDrone.SignalR;
 using Sonarr.Api.V5.Provider;
@@ -18,9 +20,32 @@ public class DownloadClientController : ProviderControllerBase<DownloadClientRes
     public static readonly DownloadClientResourceMapper ResourceMapper = new();
     public static readonly DownloadClientBulkResourceMapper BulkResourceMapper = new();
 
-    public DownloadClientController(IBroadcastSignalRMessage signalRBroadcaster, IDownloadClientFactory downloadClientFactory)
+    private readonly IDownloadClientFactory _downloadClientFactory;
+    private readonly IDownloadClientStatusService _downloadClientStatusService;
+
+    public DownloadClientController(IBroadcastSignalRMessage signalRBroadcaster,
+        IDownloadClientFactory downloadClientFactory,
+        IDownloadClientStatusService downloadClientStatusService)
         : base(signalRBroadcaster, downloadClientFactory, "downloadclient", ResourceMapper, BulkResourceMapper)
     {
+        _downloadClientFactory = downloadClientFactory;
+        _downloadClientStatusService = downloadClientStatusService;
+
         SharedValidator.RuleFor(c => c.Priority).InclusiveBetween(1, 50);
+    }
+
+    // Explicitly clear a failure backoff; testing a client no longer records status.
+    [HttpPost("{id:int}/reset")]
+    [Produces("application/json")]
+    public Results<NoContent, NotFound> Reset(int id)
+    {
+        if (!_downloadClientFactory.Exists(id))
+        {
+            return TypedResults.NotFound();
+        }
+
+        _downloadClientStatusService.Reset(id);
+
+        return TypedResults.NoContent();
     }
 }

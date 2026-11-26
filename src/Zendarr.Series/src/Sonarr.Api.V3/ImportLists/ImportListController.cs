@@ -1,4 +1,5 @@
 using FluentValidation;
+using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
@@ -15,12 +16,19 @@ namespace Sonarr.Api.V3.ImportLists
         public static readonly ImportListResourceMapper ResourceMapper = new();
         public static readonly ImportListBulkResourceMapper BulkResourceMapper = new();
 
+        private readonly IImportListFactory _importListFactory;
+        private readonly IImportListStatusService _importListStatusService;
+
         public ImportListController(IBroadcastSignalRMessage signalRBroadcaster,
             IImportListFactory importListFactory,
+            IImportListStatusService importListStatusService,
             RootFolderExistsValidator rootFolderExistsValidator,
             QualityProfileExistsValidator qualityProfileExistsValidator)
             : base(signalRBroadcaster, importListFactory, "importlist", ResourceMapper, BulkResourceMapper)
         {
+            _importListFactory = importListFactory;
+            _importListStatusService = importListStatusService;
+
             SharedValidator.RuleFor(c => c.RootFolderPath).Cascade(CascadeMode.Stop)
                 .IsValidPath()
                 .SetValidator(rootFolderExistsValidator);
@@ -28,6 +36,21 @@ namespace Sonarr.Api.V3.ImportLists
             SharedValidator.RuleFor(c => c.QualityProfileId).Cascade(CascadeMode.Stop)
                 .ValidId()
                 .SetValidator(qualityProfileExistsValidator);
+        }
+
+        // Explicitly clear a failure backoff; testing an import list no longer records status.
+        [HttpPost("{id:int}/reset")]
+        [Produces("application/json")]
+        public ActionResult Reset(int id)
+        {
+            if (!_importListFactory.Exists(id))
+            {
+                return NotFound();
+            }
+
+            _importListStatusService.Reset(id);
+
+            return NoContent();
         }
     }
 }

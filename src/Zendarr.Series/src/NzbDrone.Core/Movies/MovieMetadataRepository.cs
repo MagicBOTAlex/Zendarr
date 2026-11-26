@@ -67,6 +67,26 @@ namespace NzbDrone.Core.Movies
                 {
                     metadata.UseDbFieldsFrom(existingMetadata);
 
+                    // This upsert is also used by collection and import-list refreshes,
+                    // which run outside the per-movie metadata latch and hand us a
+                    // provider payload that neither knows the current lifecycle state
+                    // nor when the movie was last synced. Never let such a payload
+                    // regress a terminal status (Released -> InCinemas, or resurrect
+                    // Deleted) or clear the last successful sync timestamp.
+                    // An explicit Deleted/LastInfoSync from the caller still wins, so
+                    // the main refresh path can mark a movie deleted and advance its
+                    // sync timestamp as before.
+                    if (metadata.Status != MovieStatusType.Deleted &&
+                        (existingMetadata.Status is MovieStatusType.Released or MovieStatusType.Deleted))
+                    {
+                        metadata.Status = existingMetadata.Status;
+                    }
+
+                    if (metadata.LastInfoSync == null && existingMetadata.LastInfoSync.HasValue)
+                    {
+                        metadata.LastInfoSync = existingMetadata.LastInfoSync;
+                    }
+
                     if (!metadata.Equals(existingMetadata))
                     {
                         updateList.Add(metadata);

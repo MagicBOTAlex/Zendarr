@@ -147,6 +147,13 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
         // How long a device is skipped after a runtime encode failure.
         internal TimeSpan DeviceCooldown { get; set; } = TimeSpan.FromMinutes(5);
 
+        // AwaitingReview is terminal for encoding, so nothing else would ever discard an output the
+        // user never resolves: without this bound an abandoned multi-GB review sits in the working
+        // folder forever. The default is deliberately long (a week) so a recent review is never
+        // swept; set it to zero or a negative value to disable the sweep entirely.
+        public static readonly TimeSpan DefaultReviewTimeout = TimeSpan.FromDays(7);
+        internal TimeSpan ReviewTimeout { get; set; } = DefaultReviewTimeout;
+
         public string GetTempFolder()
         {
             var configured = _configService.TranscodeTempFolder;
@@ -308,6 +315,17 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
             {
                 // A single unreadable row must never stop the scheduler from starting.
                 _logger.Error(ex, "Unable to recover interrupted transcode jobs");
+            }
+
+            try
+            {
+                // Housekeeping also runs at startup, so abandoned reviews are collected even when
+                // media compression is currently disabled (the periodic pump pass is gated on it).
+                ExpireStaleReviews();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Unable to expire stale transcode reviews");
             }
 
             Start();
@@ -1982,6 +2000,11 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
         {
             var now = DateTime.UtcNow;
 
+            // The same cadence that recovers interrupted encodes also sweeps the review backlog:
+            // AwaitingReview is terminal (only an explicit resolve leaves it), so an abandoned
+            // review would otherwise keep its multi-GB output in the working folder indefinitely.
+            ExpireStaleReviews();
+
             foreach (var job in _repository.GetByStatus(TranscodeJobStatus.Running) ?? new List<TranscodeJob>())
             {
                 if (IsJobOwned(job.Id) || IsWithinGrace(job, now))
@@ -2001,6 +2024,70 @@ namespace NzbDrone.Core.MediaFiles.Transcoding
 
                 RunIsolated(job, RecoverTransferringJob, "reconcile stranded transfer");
             }
+        }
+
+        // Cancels reviews that have been waiting longer than ReviewTimeout so their temp output is
+        // removed. Runs at startup and on the reconcile cadence; every row is isolated so one bad
+        // row cannot stop the sweep. A review is only expired when a timestamp proves its age, and
+        // a failed persist leaves both the row and its output untouched (Finish throws before the
+        // working folder is cleaned).
+        internal void ExpireStaleReviews()
+        {
+            var now = DateTime.UtcNow;
+
+            foreach (var job in _repository.GetByStatus(TranscodeJobStatus.AwaitingReview) ?? new List<TranscodeJob>())
+            {
+                RunIsolated(job, candidate => ExpireReview(candidate, now), "expire stale transcode review");
+            }
+        }
+
+        private void ExpireReview(TranscodeJob job, DateTime now)
+        {
+            string outputPath = null;
+
+            // Share the per-job transition gate with resolve/cancel: a review claimed by the user
+            // just before this pass is Transferring (or already terminal) and is left alone, and a
+            // cancel that wins this race is never overwritten.
+            lock (GetTransitionLock(job.Id))
+            {
+                var fresh = _repository.Find(job.Id);
+
+                if (fresh == null || fresh.Status != TranscodeJobStatus.AwaitingReview || !IsReviewExpired(fresh, now))
+                {
+                    return;
+                }
+
+                outputPath = fresh.OutputPath;
+
+                _logger.Warn("Discarding the transcoded output of job {0}: the review expired after {1}", fresh.Id, ReviewTimeout);
+
+                // Finish re-checks the row, allows AwaitingReview -> Cancelled, clears the stale
+                // output fields and removes the working folder.
+                Finish(fresh, TranscodeJobStatus.Cancelled, message: "Review expired; the transcoded output was discarded");
+            }
+
+            // Finish removes the per-job folder; delete the described output too in case the
+            // configured working folder changed while the review was pending. Never touch a path
+            // outside the current working folder.
+            if (outputPath.IsNotNullOrWhiteSpace() && IsInsideDirectory(GetTempFolder(), outputPath))
+            {
+                DeleteQuietly(outputPath);
+            }
+        }
+
+        private bool IsReviewExpired(TranscodeJob job, DateTime now)
+        {
+            if (ReviewTimeout <= TimeSpan.Zero)
+            {
+                return false;
+            }
+
+            // Nothing updates a review row while it waits, so LastUpdatedAt is the review start;
+            // EndedAt is the encode finish and is the fallback for a recovered/legacy row. A row
+            // with neither timestamp is left alone rather than guessed at.
+            var reviewedAt = job.LastUpdatedAt ?? job.EndedAt;
+
+            return reviewedAt.HasValue && now - reviewedAt.Value >= ReviewTimeout;
         }
 
         private bool IsJobOwned(int jobId)

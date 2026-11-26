@@ -8,6 +8,7 @@ using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.History;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
@@ -40,6 +41,7 @@ namespace Sonarr.Api.V3.Queue
         private readonly IIgnoredDownloadService _ignoredDownloadService;
         private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly IBlocklistService _blocklistService;
+        private readonly IDownloadHistoryService _downloadHistoryService;
         private readonly ISubsystemAccessor _subsystemAccessor;
 
         public QueueController(IBroadcastSignalRMessage broadcastSignalRMessage,
@@ -51,6 +53,7 @@ namespace Sonarr.Api.V3.Queue
                            IIgnoredDownloadService ignoredDownloadService,
                            IProvideDownloadClient downloadClientProvider,
                            IBlocklistService blocklistService,
+                           IDownloadHistoryService downloadHistoryService,
                            ISubsystemAccessor subsystemAccessor)
             : base(broadcastSignalRMessage)
         {
@@ -61,6 +64,7 @@ namespace Sonarr.Api.V3.Queue
             _ignoredDownloadService = ignoredDownloadService;
             _downloadClientProvider = downloadClientProvider;
             _blocklistService = blocklistService;
+            _downloadHistoryService = downloadHistoryService;
             _subsystemAccessor = subsystemAccessor;
 
             _qualityComparer = new QualityModelComparer(qualityProfileService.GetDefaultProfile(string.Empty));
@@ -370,6 +374,13 @@ namespace Sonarr.Api.V3.Queue
             if (blocklist)
             {
                 _failedDownloadService.MarkAsFailed(trackedDownload, null, null, skipRedownload);
+            }
+            else if (removeFromClient || changeCategory)
+            {
+                // Removing from the client or changing its category stops tracking without
+                // writing a failed/ignored/imported event. Record a terminal event so the
+                // durable "already grabbed" guard stops treating this grab as in progress.
+                _downloadHistoryService.RecordRemovedDownload(trackedDownload);
             }
 
             if (!removeFromClient && !blocklist && !changeCategory)

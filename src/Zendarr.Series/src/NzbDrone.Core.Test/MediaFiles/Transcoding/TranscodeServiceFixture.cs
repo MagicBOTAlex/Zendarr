@@ -1974,6 +1974,125 @@ INSERT INTO ""TranscodeJobs"" VALUES (65, 7, 0, NULL, NULL, NULL, NULL);";
         }
 
         [Test]
+        public void housekeeping_should_discard_an_expired_review_and_remove_its_output()
+        {
+            var expired = new TranscodeJob
+            {
+                Id = 1,
+                Status = TranscodeJobStatus.AwaitingReview,
+                SourcePath = @"C:\media\episode.mkv".AsOsAgnostic(),
+                OutputPath = @"C:\appdata\transcode\1\episode.mkv".AsOsAgnostic(),
+                OutputSize = 500,
+                Progress = 100,
+                LastUpdatedAt = DateTime.UtcNow.AddDays(-2)
+            };
+
+            var outputPath = expired.OutputPath;
+            var folder = Path.Combine(@"C:\appdata".AsOsAgnostic(), "transcode", "1");
+
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Running)).Returns(new List<TranscodeJob>());
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Transferring)).Returns(new List<TranscodeJob>());
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.AwaitingReview)).Returns(new List<TranscodeJob> { expired });
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(1)).Returns(expired);
+            Mocker.GetMock<IDiskProvider>().Setup(disk => disk.FolderExists(folder)).Returns(true);
+            Mocker.GetMock<IDiskProvider>().Setup(disk => disk.FileExists(outputPath)).Returns(true);
+
+            Subject.ReviewTimeout = TimeSpan.FromDays(1);
+            Subject.ReconcileStrandedJobs();
+
+            expired.Status.Should().Be(TranscodeJobStatus.Cancelled);
+            expired.Message.Should().Contain("expired");
+            expired.OutputPath.Should().BeNull();
+            expired.OutputSize.Should().BeNull();
+
+            Mocker.GetMock<IDiskProvider>().Verify(disk => disk.DeleteFolder(folder, true), Times.Once);
+            Mocker.GetMock<IDiskProvider>().Verify(disk => disk.DeleteFile(outputPath), Times.Once);
+        }
+
+        [Test]
+        public void housekeeping_should_leave_a_recent_review_alone()
+        {
+            var recent = new TranscodeJob
+            {
+                Id = 1,
+                Status = TranscodeJobStatus.AwaitingReview,
+                SourcePath = @"C:\media\episode.mkv".AsOsAgnostic(),
+                OutputPath = @"C:\appdata\transcode\1\episode.mkv".AsOsAgnostic(),
+                OutputSize = 500,
+                LastUpdatedAt = DateTime.UtcNow
+            };
+
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Running)).Returns(new List<TranscodeJob>());
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.Transferring)).Returns(new List<TranscodeJob>());
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.AwaitingReview)).Returns(new List<TranscodeJob> { recent });
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(1)).Returns(recent);
+
+            // The built-in timeout is deliberately long, so a review created today is never swept.
+            Subject.ReviewTimeout.Should().Be(TranscodeService.DefaultReviewTimeout);
+            Subject.ReviewTimeout.Should().BeGreaterThan(TimeSpan.FromDays(1));
+
+            Subject.ExpireStaleReviews();
+
+            recent.Status.Should().Be(TranscodeJobStatus.AwaitingReview);
+            recent.OutputPath.Should().NotBeNull();
+            recent.Message.Should().BeNull();
+
+            Mocker.GetMock<IDiskProvider>().Verify(disk => disk.DeleteFolder(It.IsAny<string>(), It.IsAny<bool>()), Times.Never);
+        }
+
+        [Test]
+        public void housekeeping_should_leave_an_undated_review_alone()
+        {
+            var undated = new TranscodeJob
+            {
+                Id = 1,
+                Status = TranscodeJobStatus.AwaitingReview,
+                OutputPath = @"C:\appdata\transcode\1\episode.mkv".AsOsAgnostic()
+            };
+
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.AwaitingReview)).Returns(new List<TranscodeJob> { undated });
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(1)).Returns(undated);
+
+            // A row whose age cannot be proven (no LastUpdatedAt and no EndedAt) is never guessed at,
+            // even with a very short timeout.
+            Subject.ReviewTimeout = TimeSpan.FromSeconds(1);
+            Subject.ExpireStaleReviews();
+
+            undated.Status.Should().Be(TranscodeJobStatus.AwaitingReview);
+        }
+
+        [Test]
+        public void housekeeping_should_not_discard_an_expired_review_when_the_cancel_cannot_be_persisted()
+        {
+            var expired = new TranscodeJob
+            {
+                Id = 1,
+                Status = TranscodeJobStatus.AwaitingReview,
+                OutputPath = @"C:\appdata\transcode\1\episode.mkv".AsOsAgnostic(),
+                LastUpdatedAt = DateTime.UtcNow.AddDays(-2)
+            };
+
+            var folder = Path.Combine(@"C:\appdata".AsOsAgnostic(), "transcode", "1");
+
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.GetByStatus(TranscodeJobStatus.AwaitingReview)).Returns(new List<TranscodeJob> { expired });
+            Mocker.GetMock<ITranscodeJobRepository>().Setup(repository => repository.Find(1)).Returns(expired);
+            Mocker.GetMock<ITranscodeJobRepository>()
+                  .Setup(repository => repository.Update(It.IsAny<TranscodeJob>()))
+                  .Throws(new IOException("database is locked"));
+            Mocker.GetMock<IDiskProvider>().Setup(disk => disk.FolderExists(folder)).Returns(true);
+
+            Subject.ReviewTimeout = TimeSpan.FromDays(1);
+
+            Action act = () => Subject.ExpireStaleReviews();
+
+            act.Should().NotThrow();
+
+            // The row is not durably cancelled, so the output must be left in place for a later pass.
+            Mocker.GetMock<IDiskProvider>().Verify(disk => disk.DeleteFolder(folder, true), Times.Never);
+            Mocker.GetMock<IDiskProvider>().Verify(disk => disk.DeleteFile(It.IsAny<string>()), Times.Never);
+        }
+
+        [Test]
         public void cancel_should_clear_stale_progress_on_the_terminal_row()
         {
             _job.Status = TranscodeJobStatus.Queued;

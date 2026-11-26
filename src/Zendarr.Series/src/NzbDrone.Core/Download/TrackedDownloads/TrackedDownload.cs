@@ -49,10 +49,22 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
         // Terminal downloads are replaced with a new tracked object on a subsequent grab.
         // Other transitions include retry, manual import, and restoration from history.
+        // Imported is the one terminal state that may still be written over another terminal
+        // state: importing a file is a fact about the filesystem, so a download that was marked
+        // Failed/Ignored and then imported by hand must record that it is now imported.
         public bool CanTransitionTo(TrackedDownloadState state)
         {
-            return Enum.IsDefined(typeof(TrackedDownloadState), state) &&
-                   (_state == state || !IsTerminal(_state));
+            if (!Enum.IsDefined(typeof(TrackedDownloadState), state))
+            {
+                return false;
+            }
+
+            if (_state == state || !IsTerminal(_state))
+            {
+                return true;
+            }
+
+            return state == TrackedDownloadState.Imported;
         }
 
         public bool TransitionTo(TrackedDownloadState state)
@@ -71,6 +83,18 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             }
 
             return true;
+        }
+
+        // A reused tracked object has not been re-evaluated, so it must not carry the Warning
+        // (and its messages) produced by an earlier evaluation into a later stage. Status is
+        // derived from State alone here: only FailedPending is an error, everything else is Ok.
+        // A warning is transient and is set again by Warn() within the current evaluation.
+        public void ResetStatusFromState()
+        {
+            StatusMessages = Array.Empty<TrackedDownloadStatusMessage>();
+            Status = _state == TrackedDownloadState.FailedPending
+                ? TrackedDownloadStatus.Error
+                : TrackedDownloadStatus.Ok;
         }
 
         private static bool IsTerminal(TrackedDownloadState state)

@@ -82,6 +82,21 @@ namespace NzbDrone.Core.Test.Download.FailedDownloadServiceTests
             AssertDownloadFailed();
         }
 
+        [Test]
+        public void should_mark_failed_when_no_grabbed_history_is_found()
+        {
+            Mocker.GetMock<IHistoryService>()
+                  .Setup(s => s.Find(_trackedDownload.DownloadItem.DownloadId, EpisodeHistoryEventType.Grabbed))
+                  .Returns(new List<EpisodeHistory>());
+
+            Subject.ProcessFailed(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.Failed);
+
+            Mocker.GetMock<IEventAggregator>()
+                  .Verify(v => v.PublishEvent(It.IsAny<DownloadFailedEvent>()), Times.Never());
+        }
+
         private void AssertDownloadNotFailed()
         {
             Mocker.GetMock<IEventAggregator>()

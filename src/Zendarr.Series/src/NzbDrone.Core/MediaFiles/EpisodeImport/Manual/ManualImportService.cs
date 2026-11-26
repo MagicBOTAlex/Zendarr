@@ -645,7 +645,14 @@ namespace NzbDrone.Core.MediaFiles.EpisodeImport.Manual
                 {
                     var episodeFiles = importedResults.Select(i => i.EpisodeFile).ToList();
 
-                    trackedDownload.State = TrackedDownloadState.Imported;
+                    // The file is already imported at this point, so this must not throw: a manual
+                    // import can complete a download that already reached Failed/Ignored.
+                    // TransitionTo reports a refused write instead of throwing like the setter.
+                    if (!trackedDownload.TransitionTo(TrackedDownloadState.Imported))
+                    {
+                        _logger.Warn("Download '{0}' did not accept the Imported state after a manual import", trackedDownload.DownloadItem.Title);
+                    }
+
                     _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload, importedSeries.Id, episodeFiles, importedResults.First().ImportDecision.LocalEpisode.Release));
                 }
             }

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
@@ -14,6 +15,7 @@ namespace NzbDrone.Core.Download.History
     {
         DownloadHistory GetLatestDownloadHistoryItem(string downloadId);
         DownloadHistory GetLatestGrab(string downloadId);
+        void RecordRemovedDownload(TrackedDownload trackedDownload);
     }
 
     public class DownloadHistoryService : IDownloadHistoryService,
@@ -76,6 +78,37 @@ namespace NzbDrone.Core.Download.History
         {
             return _repository.FindByDownloadId(downloadId)
                               .FirstOrDefault(d => d.EventType == DownloadHistoryEventType.DownloadGrabbed);
+        }
+
+        public void RecordRemovedDownload(TrackedDownload trackedDownload)
+        {
+            var downloadItem = trackedDownload.DownloadItem;
+
+            if (downloadItem == null || downloadItem.DownloadId.IsNullOrWhiteSpace())
+            {
+                return;
+            }
+
+            // Removing the download from the client, or changing its category, stops tracking
+            // without a failed/ignored/imported event. Persist a terminal event so the durable
+            // "already grabbed" guard does not keep rejecting the release forever.
+            var history = new DownloadHistory
+            {
+                EventType = DownloadHistoryEventType.DownloadIgnored,
+                SeriesId = trackedDownload.RemoteEpisode?.Series?.Id ?? 0,
+                MovieId = trackedDownload.RemoteMovie?.Movie?.Id ?? 0,
+                DownloadId = downloadItem.DownloadId,
+                SourceTitle = downloadItem.Title,
+                Date = DateTime.UtcNow,
+                Protocol = trackedDownload.Protocol,
+                DownloadClientId = trackedDownload.DownloadClient
+            };
+
+            history.Data.Add("DownloadClient", downloadItem.DownloadClientInfo?.Type);
+            history.Data.Add("DownloadClientName", downloadItem.DownloadClientInfo?.Name);
+            history.Data.Add("Message", "Removed from queue");
+
+            _repository.Insert(history);
         }
 
         public void Handle(EpisodeGrabbedEvent message)

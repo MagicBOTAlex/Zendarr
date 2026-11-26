@@ -15,6 +15,10 @@ namespace NzbDrone.Core.ThingiProvider.Status
         void RecordSuccess(int providerId);
         void RecordFailure(int providerId, TimeSpan minimumBackOff = default(TimeSpan));
         void RecordConnectionFailure(int providerId);
+
+        // Explicit operator action: clear the failure backoff so a provider that is disabled until
+        // DisabledTill can be used again immediately instead of waiting out the escalation period.
+        void Reset(int providerId);
     }
 
     public abstract class ProviderStatusServiceBase<TProvider, TModel> : IProviderStatusServiceBase<TModel>, IHandleAsync<ProviderDeletedEvent<TProvider>>
@@ -149,6 +153,38 @@ namespace NzbDrone.Core.ThingiProvider.Status
         public virtual void RecordConnectionFailure(int providerId)
         {
             RecordFailure(providerId, default(TimeSpan), false);
+        }
+
+        public virtual void Reset(int providerId)
+        {
+            if (providerId <= 0)
+            {
+                return;
+            }
+
+            lock (_syncRoot)
+            {
+                var status = GetProviderStatus(providerId);
+
+                // No stored status row means there is no backoff to clear; don't create one.
+                if (status.Id == 0)
+                {
+                    return;
+                }
+
+                if (status.EscalationLevel == 0 && !status.InitialFailure.HasValue && !status.DisabledTill.HasValue)
+                {
+                    return;
+                }
+
+                status.EscalationLevel = 0;
+                status.InitialFailure = null;
+                status.DisabledTill = null;
+
+                _providerStatusRepository.Upsert(status);
+
+                _eventAggregator.PublishEvent(new ProviderStatusChangedEvent<TProvider>(providerId, status));
+            }
         }
 
         public virtual void HandleAsync(ProviderDeletedEvent<TProvider> message)

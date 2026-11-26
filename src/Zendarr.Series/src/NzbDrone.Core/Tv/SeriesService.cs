@@ -1,10 +1,13 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using Dapper;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.AutoTagging;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Tv.Events;
@@ -34,6 +37,7 @@ namespace NzbDrone.Core.Tv
         Series UpdateSeries(Series series, bool updateEpisodesToMatchSeason = true, bool publishUpdatedEvent = true);
         Series UpdateSeriesMetadata(Series series);
         Series UpdateSeriesStatus(int seriesId, SeriesStatusType status);
+        Series RestoreSeries(int seriesId, SeriesStatusType status);
         List<Series> UpdateSeries(List<Series> series, bool useExistingRelativeFolder);
         bool SeriesPathExists(string folder);
         void RemoveAddOptions(Series series);
@@ -329,8 +333,9 @@ namespace NzbDrone.Core.Tv
 
         public Series UpdateSeriesStatus(int seriesId, SeriesStatusType status)
         {
-            // A 404 may supersede Ended, but neither terminal state may be resurrected.
-            // The predicate is evaluated by the database, not against a stale in-memory row.
+            // Automatic refresh path only: a 404 may supersede Ended, but neither terminal
+            // state may be resurrected here. The predicate is evaluated by the database, not
+            // against a stale in-memory row. Deliberate recovery goes through RestoreSeries.
             using (var connection = _database.OpenConnection())
             {
                 connection.Execute("UPDATE \"Series\" SET \"Status\" = @Status WHERE \"Id\" = @Id AND \"Status\" != @Deleted AND (\"Status\" != @Ended OR @Status = @Deleted)",
@@ -338,6 +343,34 @@ namespace NzbDrone.Core.Tv
             }
 
             return GetSeries(seriesId);
+        }
+
+        public Series RestoreSeries(int seriesId, SeriesStatusType status)
+        {
+            // Explicit, user-initiated status change: un-delete a series that was wrongly
+            // marked Deleted, or re-open a series that was latched as Ended. This is the only
+            // path that can lift a terminal status; UpdateSeriesStatus stays latched for the
+            // automatic refresh. The write still targets a non-deleted status only, so this
+            // action can never be used to hide a series.
+            if (status == SeriesStatusType.Deleted || !Enum.IsDefined(status))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.BadRequest, "'{0}' is not a valid status to restore a series to", status);
+            }
+
+            var storedSeries = GetSeries(seriesId);
+
+            using (var connection = _database.OpenConnection())
+            {
+                connection.Execute("UPDATE \"Series\" SET \"Status\" = @Status WHERE \"Id\" = @Id",
+                    new { Id = seriesId, Status = (int)status });
+            }
+
+            var updatedSeries = GetSeries(seriesId);
+
+            _logger.Info("Series '{0}' status restored from {1} to {2}", updatedSeries.Title, storedSeries.Status, updatedSeries.Status);
+            _eventAggregator.PublishEvent(new SeriesUpdatedEvent(updatedSeries));
+
+            return updatedSeries;
         }
 
         public bool SeriesPathExists(string folder)

@@ -111,11 +111,13 @@ namespace NzbDrone.Core.Download
             if (historyItem == null && trackedDownload.DownloadItem.Category.IsNullOrWhiteSpace())
             {
                 trackedDownload.Warn($"Download wasn't grabbed by {BuildInfo.AppName} and not in a category, Skipping.");
+                CountUnsuccessfulAttempt(trackedDownload);
                 return;
             }
 
             if (!ValidatePath(trackedDownload))
             {
+                CountUnsuccessfulAttempt(trackedDownload);
                 return;
             }
 
@@ -132,6 +134,7 @@ namespace NzbDrone.Core.Download
                 {
                     trackedDownload.Warn("Series title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes.");
                     SetStateToImportBlocked(trackedDownload);
+                    CountUnsuccessfulAttempt(trackedDownload);
 
                     return;
                 }
@@ -144,6 +147,7 @@ namespace NzbDrone.Core.Download
                 {
                     trackedDownload.Warn("Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. See the FAQ for details.");
                     SetStateToImportBlocked(trackedDownload);
+                    CountUnsuccessfulAttempt(trackedDownload);
 
                     return;
                 }
@@ -160,11 +164,13 @@ namespace NzbDrone.Core.Download
             if (historyItem == null && trackedDownload.DownloadItem.Category.IsNullOrWhiteSpace())
             {
                 trackedDownload.Warn("Download wasn't grabbed by Zendarr and not in a category, Skipping.");
+                CountUnsuccessfulAttempt(trackedDownload);
                 return;
             }
 
             if (!ValidatePath(trackedDownload))
             {
+                CountUnsuccessfulAttempt(trackedDownload);
                 return;
             }
 
@@ -181,6 +187,7 @@ namespace NzbDrone.Core.Download
                 {
                     trackedDownload.Warn("Movie title mismatch; automatic import is not possible. Check the download troubleshooting entry on the wiki for common causes.");
                     SetStateToImportBlockedMovie(trackedDownload);
+                    CountUnsuccessfulAttempt(trackedDownload);
 
                     return;
                 }
@@ -193,6 +200,7 @@ namespace NzbDrone.Core.Download
                 {
                     trackedDownload.Warn("Found matching movie via grab history, but release was matched to movie by ID. Automatic import is not possible. See the FAQ for details.");
                     SetStateToImportBlockedMovie(trackedDownload);
+                    CountUnsuccessfulAttempt(trackedDownload);
 
                     return;
                 }
@@ -296,6 +304,10 @@ namespace NzbDrone.Core.Download
                     return;
                 }
             }
+            else if (ProcessRejectedImports(trackedDownload, importResults))
+            {
+                return;
+            }
 
             var statusMessages = new List<TrackedDownloadStatusMessage>
                                  {
@@ -371,6 +383,10 @@ namespace NzbDrone.Core.Download
                     return;
                 }
             }
+            else if (ProcessRejectedImports(trackedDownload, importResults))
+            {
+                return;
+            }
 
             var statusMessages = new List<TrackedDownloadStatusMessage>
                                  {
@@ -393,6 +409,38 @@ namespace NzbDrone.Core.Download
                 trackedDownload.Warn(statusMessages.ToArray());
                 SetStateToImportBlockedMovie(trackedDownload);
             }
+        }
+
+        // A single-file import only has one result, so its rejection is the download's fate.
+        // A multi-file download (e.g. a season pack) can contain a dangerous, executable or
+        // user-rejected file alongside valid files, so check every result and let the rejection
+        // guard fail the whole download instead of only warning and retrying forever.
+        private bool ProcessRejectedImports(TrackedDownload trackedDownload, List<ImportResult> importResults)
+        {
+            foreach (var importResult in importResults)
+            {
+                if (_rejectedImportService.Process(trackedDownload, importResult) &&
+                    trackedDownload.State == TrackedDownloadState.FailedPending)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool ProcessRejectedImports(TrackedDownload trackedDownload, List<MovieImport.ImportResult> importResults)
+        {
+            foreach (var importResult in importResults)
+            {
+                if (_rejectedImportService.Process(trackedDownload, importResult) &&
+                    trackedDownload.State == TrackedDownloadState.FailedPending)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults)
@@ -524,6 +572,23 @@ namespace NzbDrone.Core.Download
 
             _logger.Debug("Not all movies have been imported for the release '{0}'", trackedDownload.DownloadItem.Title);
             return false;
+        }
+
+        // A pass that cannot progress (no grab history, a path that is not local, a title
+        // mismatch) counts against the same retry budget as a failed import. Once the budget is
+        // spent the download is failed, so a warning does not leave it queued forever.
+        private void CountUnsuccessfulAttempt(TrackedDownload trackedDownload)
+        {
+            trackedDownload.ImportAttempts++;
+
+            if (trackedDownload.ImportAttempts >= MaxImportAttempts)
+            {
+                _logger.Debug("Download '{0}' could not be imported after {1} attempts, marking as failed",
+                    trackedDownload.DownloadItem.Title,
+                    trackedDownload.ImportAttempts);
+
+                trackedDownload.Fail();
+            }
         }
 
         private void SetStateToImportBlocked(TrackedDownload trackedDownload)

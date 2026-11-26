@@ -117,6 +117,11 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             {
                 LogItemChange(existingItem, existingItem.DownloadItem, downloadItem);
 
+                // The cached object is reused without re-evaluating it, so re-derive Status from
+                // its State instead of carrying a Warning and its messages from an earlier pass
+                // into a later stage. Warn() re-adds a warning if this evaluation still needs one.
+                existingItem.ResetStatusFromState();
+
                 // A changed output path means the item was moved (e.g. the user fixed the
                 // download location). Clear the retry cap so the import can run against the new
                 // path instead of staying stuck on the manual-interaction state.

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FluentValidation.Results;
 using NLog;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.ThingiProvider;
@@ -96,27 +95,6 @@ namespace NzbDrone.Core.ImportLists
 
                 yield return importList;
             }
-        }
-
-        public override ValidationResult Test(ImportListDefinition definition)
-        {
-            var result = base.Test(definition);
-
-            if (definition.Id == 0)
-            {
-                return result;
-            }
-
-            if (result == null || result.IsValid)
-            {
-                _importListStatusService.RecordSuccess(definition.Id);
-            }
-            else
-            {
-                _importListStatusService.RecordFailure(definition.Id);
-            }
-
-            return result;
         }
     }
 }

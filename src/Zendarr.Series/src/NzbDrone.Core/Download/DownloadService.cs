@@ -8,6 +8,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Common.TPL;
+using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
@@ -37,6 +38,7 @@ namespace NzbDrone.Core.Download
         private readonly IRateLimitService _rateLimitService;
         private readonly IEventAggregator _eventAggregator;
         private readonly ISeedConfigProvider _seedConfigProvider;
+        private readonly AlreadyImportedSpecification _alreadyImportedSpecification;
         private readonly Logger _logger;
 
         public DownloadService(IProvideDownloadClient downloadClientProvider,
@@ -46,6 +48,7 @@ namespace NzbDrone.Core.Download
                                IRateLimitService rateLimitService,
                                IEventAggregator eventAggregator,
                                ISeedConfigProvider seedConfigProvider,
+                               AlreadyImportedSpecification alreadyImportedSpecification,
                                Logger logger)
         {
             _downloadClientProvider = downloadClientProvider;
@@ -55,11 +58,29 @@ namespace NzbDrone.Core.Download
             _rateLimitService = rateLimitService;
             _eventAggregator = eventAggregator;
             _seedConfigProvider = seedConfigProvider;
+            _alreadyImportedSpecification = alreadyImportedSpecification;
             _logger = logger;
+        }
+
+        // The grab endpoint and the automatic processor both call DownloadReport directly, so
+        // the decision engine (including AlreadyImportedSpecification and QueueSpecification)
+        // never sees these transitions. Re-run the durable history guards here: first the
+        // already-imported guard, then the in-flight same-release guard.
+        private void EnsureGrabAllowed(IRemoteSubject subject)
+        {
+            var decision = _alreadyImportedSpecification.IsSatisfiedByGrab(subject);
+
+            if (decision is { Accepted: false })
+            {
+                _logger.Debug("Release '{0}' blocked at grab time: {1}", subject.Release?.Title, decision.Message);
+                throw new ReleaseBlockedException(subject.Release, "Release blocked at grab time: {0}", decision.Message);
+            }
         }
 
         public async Task DownloadReport(RemoteEpisode remoteEpisode, int? downloadClientId)
         {
+            EnsureGrabAllowed(remoteEpisode);
+
             var filterBlockedClients = remoteEpisode.Release.PendingReleaseReason == PendingReleaseReason.DownloadClientUnavailable;
 
             var tags = remoteEpisode.Series?.Tags;
@@ -208,6 +229,8 @@ namespace NzbDrone.Core.Download
 
         public async Task DownloadReport(RemoteMovie remoteMovie, int? downloadClientId)
         {
+            EnsureGrabAllowed(remoteMovie);
+
             var filterBlockedClients = remoteMovie.Release.PendingReleaseReason == PendingReleaseReason.DownloadClientUnavailable;
 
             var tags = remoteMovie.Movie?.Tags;

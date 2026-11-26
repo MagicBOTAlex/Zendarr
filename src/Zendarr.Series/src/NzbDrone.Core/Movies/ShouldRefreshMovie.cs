@@ -27,12 +27,9 @@ namespace NzbDrone.Core.Movies
                     return false;
                 }
 
-                if (movie.Status is MovieStatusType.Released or MovieStatusType.Deleted)
-                {
-                    _logger.Trace("Movie {0} has a terminal status, should not be refreshed on schedule.", movie.Title);
-                    return false;
-                }
-
+                // Terminal statuses (Released/Deleted) are not a reason to skip the refresh here:
+                // metadata such as images, ratings, credits and collection membership can still change.
+                // The terminal status itself is latched on write in RefreshMovieService.
                 if (movie.LastInfoSync < DateTime.UtcNow.AddDays(-180))
                 {
                     _logger.Trace("Movie {0} last updated more than 180 days ago, should refresh.", movie.Title);
@@ -49,6 +46,13 @@ namespace NzbDrone.Core.Movies
                 if (movie.Status is MovieStatusType.Announced or MovieStatusType.InCinemas)
                 {
                     _logger.Trace("Movie {0} is announced or in cinemas, should refresh.", movie.Title);
+                    return true;
+                }
+
+                if (movie.Status == MovieStatusType.Released &&
+                    movie.PhysicalReleaseDate() >= DateTime.UtcNow.AddDays(-30))
+                {
+                    _logger.Trace("Movie {0} is released since less than 30 days, should refresh", movie.Title);
                     return true;
                 }
 

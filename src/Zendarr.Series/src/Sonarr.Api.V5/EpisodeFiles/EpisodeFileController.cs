@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using NzbDrone.Common;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.DecisionEngine.Specifications;
@@ -134,14 +135,56 @@ public class EpisodeFileController : RestControllerWithSignalR<EpisodeFileResour
     public NoContent DeleteEpisodeFiles([FromBody] EpisodeFileListResource resource)
     {
         var episodeFiles = _mediaFileService.GetFiles(resource.EpisodeFileIds);
-        var series = _seriesService.GetSeries(episodeFiles.First().SeriesId);
+
+        if (episodeFiles.Count == 0)
+        {
+            throw new BadRequestException("No episode files found to delete");
+        }
+
+        var seriesIds = episodeFiles.Select(f => f.SeriesId).Distinct();
+        var seriesById = seriesIds.ToDictionary(id => id, id => _seriesService.GetSeries(id));
+
+        // Validate every target before deleting anything so a conflict on a later file
+        // can't leave the collection half-deleted.
+        ValidateNoSharedPaths(episodeFiles, seriesById);
 
         foreach (var episodeFile in episodeFiles)
         {
-            _mediaFileDeletionService.DeleteEpisodeFile(series, episodeFile);
+            _mediaFileDeletionService.DeleteEpisodeFile(seriesById[episodeFile.SeriesId], episodeFile);
         }
 
         return TypedResults.NoContent();
+    }
+
+    private void ValidateNoSharedPaths(List<EpisodeFile> episodeFiles, Dictionary<int, Series> seriesById)
+    {
+        var seriesFiles = new Dictionary<int, List<EpisodeFile>>();
+        var conflicts = new List<string>();
+
+        foreach (var episodeFile in episodeFiles)
+        {
+            if (!seriesFiles.TryGetValue(episodeFile.SeriesId, out var siblings))
+            {
+                siblings = _mediaFileService.GetFilesBySeries(episodeFile.SeriesId);
+                seriesFiles.Add(episodeFile.SeriesId, siblings);
+            }
+
+            var series = seriesById[episodeFile.SeriesId];
+            var fullPath = Path.Combine(series.Path, episodeFile.RelativePath);
+
+            if (siblings.Any(other => other.Id != episodeFile.Id &&
+                                      PathEqualityComparer.Instance.Equals(fullPath, Path.Combine(series.Path, other.RelativePath))))
+            {
+                conflicts.Add(fullPath);
+            }
+        }
+
+        if (conflicts.Any())
+        {
+            throw new NzbDroneClientException(HttpStatusCode.Conflict,
+                "Cannot delete episode files, another episode file references the same path: {0}",
+                string.Join(", ", conflicts));
+        }
     }
 
     [HttpPut("bulk")]

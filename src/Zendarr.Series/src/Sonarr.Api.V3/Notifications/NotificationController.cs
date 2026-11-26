@@ -14,9 +14,31 @@ namespace Sonarr.Api.V3.Notifications
         public static readonly NotificationResourceMapper ResourceMapper = new();
         public static readonly NotificationBulkResourceMapper BulkResourceMapper = new();
 
-        public NotificationController(IBroadcastSignalRMessage signalRBroadcaster, NotificationFactory notificationFactory)
+        private readonly INotificationFactory _notificationFactory;
+        private readonly INotificationStatusService _notificationStatusService;
+
+        public NotificationController(IBroadcastSignalRMessage signalRBroadcaster,
+            NotificationFactory notificationFactory,
+            INotificationStatusService notificationStatusService)
             : base(signalRBroadcaster, notificationFactory, "notification", ResourceMapper, BulkResourceMapper)
         {
+            _notificationFactory = notificationFactory;
+            _notificationStatusService = notificationStatusService;
+        }
+
+        // Explicitly clear a failure backoff; testing a notification no longer records status.
+        [HttpPost("{id:int}/reset")]
+        [Produces("application/json")]
+        public ActionResult Reset(int id)
+        {
+            if (!_notificationFactory.Exists(id))
+            {
+                return NotFound();
+            }
+
+            _notificationStatusService.Reset(id);
+
+            return NoContent();
         }
 
         protected override bool IsFieldVisible(Field field, AppSubsystem subsystem)

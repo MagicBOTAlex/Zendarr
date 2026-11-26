@@ -78,6 +78,19 @@ namespace NzbDrone.Core.Test.Download.FailedDownloadServiceTests
         }
 
         [Test]
+        public void should_fail_download_when_still_unhandled_after_max_attempts()
+        {
+            _trackedDownload.DownloadItem.Status = DownloadItemStatus.Failed;
+            _trackedDownload.ImportAttempts = 2;
+            GivenNoGrabbedHistory();
+
+            Subject.Check(_trackedDownload);
+
+            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
+            _trackedDownload.ImportAttempts.Should().Be(3);
+        }
+
+        [Test]
         public void should_not_warn_if_matching_history_is_not_found_and_not_failed()
         {
             _trackedDownload.DownloadItem.Status = DownloadItemStatus.Failed;

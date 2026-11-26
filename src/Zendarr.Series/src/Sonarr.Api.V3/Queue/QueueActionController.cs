@@ -128,7 +128,12 @@ namespace Sonarr.Api.V3.Queue
         // stay reachable, matching the queue list's includeUnknown behaviour.
         private NzbDrone.Core.Queue.Queue FindPendingQueueItem(int id)
         {
-            var pendingRelease = _pendingReleaseService.FindPendingQueueItem(id);
+            // The V3 series queue list emits per-episode ids (pending-{release}-ep{episode}),
+            // while the shared pending queue keys one item per release group. Resolve the
+            // per-episode form first, then fall back to the group form, so grabbing a row
+            // from this list does not 404.
+            var pendingRelease = _pendingReleaseService.FindPendingQueueItemObsolete(id) ??
+                                 _pendingReleaseService.FindPendingQueueItem(id);
 
             return IsVisible(pendingRelease) ? pendingRelease : null;
         }

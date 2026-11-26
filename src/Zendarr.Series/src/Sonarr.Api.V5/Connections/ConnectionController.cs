@@ -15,9 +15,31 @@ public class ConnectionController : ProviderControllerBase<ConnectionResource, C
     public static readonly ConnectionResourceMapper ResourceMapper = new();
     public static readonly ConnectionBulkResourceMapper BulkResourceMapper = new();
 
-    public ConnectionController(IBroadcastSignalRMessage signalRBroadcaster, NotificationFactory notificationFactory)
+    private readonly INotificationFactory _notificationFactory;
+    private readonly INotificationStatusService _notificationStatusService;
+
+    public ConnectionController(IBroadcastSignalRMessage signalRBroadcaster,
+        NotificationFactory notificationFactory,
+        INotificationStatusService notificationStatusService)
         : base(signalRBroadcaster, notificationFactory, "connection", ResourceMapper, BulkResourceMapper)
     {
+        _notificationFactory = notificationFactory;
+        _notificationStatusService = notificationStatusService;
+    }
+
+    // Explicitly clear a failure backoff; testing a connection no longer records status.
+    [HttpPost("{id:int}/reset")]
+    [Produces("application/json")]
+    public Results<NoContent, NotFound> Reset(int id)
+    {
+        if (!_notificationFactory.Exists(id))
+        {
+            return TypedResults.NotFound();
+        }
+
+        _notificationStatusService.Reset(id);
+
+        return TypedResults.NoContent();
     }
 
     [NonAction]
