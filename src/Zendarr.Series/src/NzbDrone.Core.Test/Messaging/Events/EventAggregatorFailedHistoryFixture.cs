@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
-using Moq;
 using NUnit.Framework;
 using NzbDrone.Common;
 using NzbDrone.Common.Messaging;
@@ -9,7 +8,9 @@ using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.History;
 using NzbDrone.Core.History;
+using NzbDrone.Core.Languages;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Test.Framework;
 
 namespace NzbDrone.Core.Test.Messaging.Events
@@ -47,6 +48,8 @@ namespace NzbDrone.Core.Test.Messaging.Events
             {
                 SeriesId = 1,
                 EpisodeIds = new List<int> { 2 },
+                Quality = new QualityModel(Quality.HDTV720p),
+                Languages = new List<Language> { Language.English },
                 DownloadId = downloadId,
                 SourceTitle = "Some.Release",
                 DownloadClient = "TestClient",

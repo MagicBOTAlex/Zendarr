@@ -27,6 +27,7 @@ namespace NzbDrone.Core.Test.Download.FailedDownloadServiceTests
             var completed = Builder<DownloadClientItem>.CreateNew()
                                                     .With(h => h.Status = DownloadItemStatus.Completed)
                                                     .With(h => h.OutputPath = new OsPath(@"C:\DropFolder\MyDownload".AsOsAgnostic()))
+                                                    .With(h => h.RemainingSize = 0)
                                                     .With(h => h.Title = "Drone.S01E01.HDTV")
                                                     .Build();
 
@@ -42,6 +43,7 @@ namespace NzbDrone.Core.Test.Download.FailedDownloadServiceTests
                     .With(c => c.State = TrackedDownloadState.Downloading)
                     .With(c => c.DownloadItem = completed)
                     .With(c => c.RemoteEpisode = remoteEpisode)
+                    .With(c => c.ImportAttempts = 0)
                     .Build();
 
             Mocker.GetMock<IHistoryService>()

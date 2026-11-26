@@ -168,7 +168,7 @@ namespace NzbDrone.Core.Messaging.Events
 
         private void PersistFailedHistory(DownloadFailedEvent message)
         {
-            var hasDownloadId = !message.DownloadId.IsNullOrWhiteSpace();
+            var hasDownloadId = !string.IsNullOrWhiteSpace(message.DownloadId);
             var hasMedia = message.MovieId > 0 || (message.EpisodeIds != null && message.EpisodeIds.Count > 0);
 
             if (!hasMedia)

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Moq;
 using NUnit.Framework;
 using NzbDrone.Core.Download;
@@ -11,6 +12,14 @@ namespace NzbDrone.Core.Test.Download.DownloadHistoryTests
     [TestFixture]
     public class DownloadHistoryServiceFixture : CoreTest<DownloadHistoryService>
     {
+        [SetUp]
+        public void Setup()
+        {
+            Mocker.GetMock<IDownloadHistoryRepository>()
+                  .Setup(s => s.FindByDownloadId(It.IsAny<string>()))
+                  .Returns(new List<DownloadHistory>());
+        }
+
         [Test]
         public void should_record_terminal_history_when_download_is_removed()
         {

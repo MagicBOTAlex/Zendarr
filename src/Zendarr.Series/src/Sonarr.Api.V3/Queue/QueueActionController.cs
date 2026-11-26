@@ -10,6 +10,7 @@ using NzbDrone.Core.Queue;
 using Sonarr.Http;
 using Sonarr.Http.REST;
 using Sonarr.Http.Subsystem;
+using BadRequestException = Sonarr.Http.REST.BadRequestException;
 
 namespace Sonarr.Api.V3.Queue
 {

@@ -541,8 +541,11 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
         }
 
         [Test]
-        public void should_fail_download_when_still_warned_after_max_attempts()
+        public void should_block_for_manual_interaction_when_still_warned_after_max_attempts()
         {
+            // The retry budget is spent, but this pass is what parks the item in ImportBlocked:
+            // it now waits for a human for the manual-interaction window instead of being failed
+            // and blocklisted immediately.
             _trackedDownload.ImportAttempts = 2;
             _trackedDownload.DownloadItem.Category = "tv";
 
@@ -552,7 +555,7 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
 
             Subject.Check(_trackedDownload);
 
-            _trackedDownload.State.Should().Be(TrackedDownloadState.FailedPending);
+            _trackedDownload.State.Should().Be(TrackedDownloadState.ImportBlocked);
             _trackedDownload.ImportAttempts.Should().Be(3);
         }
 

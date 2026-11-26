@@ -31,6 +31,7 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
             var completed = Builder<DownloadClientItem>.CreateNew()
                                                     .With(h => h.Status = DownloadItemStatus.Completed)
                                                     .With(h => h.OutputPath = new OsPath(@"C:\DropFolder\MyDownload".AsOsAgnostic()))
+                                                    .With(h => h.RemainingSize = 0)
                                                     .With(h => h.Title = "Drone.S01E01.HDTV")
                                                     .Build();
 
@@ -287,6 +288,7 @@ namespace NzbDrone.Core.Test.Download.CompletedDownloadServiceTests
             var completed = Builder<DownloadClientItem>.CreateNew()
                                                     .With(h => h.Status = DownloadItemStatus.Completed)
                                                     .With(h => h.OutputPath = new OsPath(@"C:\DropFolder\MyDownload".AsOsAgnostic()))
+                                                    .With(h => h.RemainingSize = 0)
                                                     .With(h => h.Title = "Drone.S01E01.HDTV")
                                                     .Build();
 
