@@ -6,6 +6,7 @@ import NotFound from 'Components/NotFound';
 import Dashboard from 'Dashboard/Dashboard';
 import MediaActivityPage from 'Library/Activity/MediaActivityPage';
 import AddNewPage from 'Library/AddNewPage';
+import AudioTracksPage from 'Library/AudioTracks/AudioTracksPage';
 import MediaCompressionPage from 'Library/Compression/MediaCompressionPage';
 import Library from 'Library/Library';
 import LibraryImportPage from 'Library/LibraryImportPage';
@@ -125,6 +126,8 @@ export function appRouteElements() {
       <Route path="/series/:titleSlug" element={<SeriesDetailsPage />} />
 
       <Route path="/transcoding" element={<MediaCompressionPage />} />
+
+      <Route path="/audio-tracks" element={<AudioTracksPage />} />
 
       <Route path="/statistics" element={<Statistics />} />
 
