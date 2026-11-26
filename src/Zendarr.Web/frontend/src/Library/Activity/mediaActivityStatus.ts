@@ -176,6 +176,7 @@ const HISTORY_BADGES: Record<
   downloadFailed: { labelKey: 'Failed', kind: 'danger' },
   episodeFileDeleted: { labelKey: 'FileDeleted', kind: 'default' },
   movieFileDeleted: { labelKey: 'FileDeleted', kind: 'default' },
+  movieFolderImported: { labelKey: 'Imported', kind: 'success' },
   episodeFileRenamed: { labelKey: 'Renamed', kind: 'default' },
   movieFileRenamed: { labelKey: 'Renamed', kind: 'default' },
   downloadIgnored: { labelKey: 'Ignored', kind: 'default' },

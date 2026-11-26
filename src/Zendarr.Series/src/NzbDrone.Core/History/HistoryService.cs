@@ -602,9 +602,13 @@ namespace NzbDrone.Core.History
 
         private string FindEpisodeFileDownloadId(int episodeId, int fileId)
         {
+            // History.Data is persisted through EmbeddedDocumentConverter, which serializes
+            // dictionary keys with DictionaryKeyPolicy = CamelCase. Rows therefore store
+            // "fileId" and are read back into a case-sensitive dictionary, so the lookup
+            // must use the persisted casing (same reason "indexerFlags" is read elsewhere).
             return _historyRepository.FindByEpisodeId(episodeId)
                 .Where(h => h.EventType == EpisodeHistoryEventType.DownloadFolderImported &&
-                            h.Data.GetValueOrDefault("FileId") == fileId.ToString() &&
+                            h.Data.GetValueOrDefault("fileId") == fileId.ToString() &&
                             !h.DownloadId.IsNullOrWhiteSpace())
                 .Select(h => h.DownloadId)
                 .FirstOrDefault();
@@ -614,7 +618,7 @@ namespace NzbDrone.Core.History
         {
             return _historyRepository.FindByMovieId(movieId)
                 .Where(h => h.EventType == MovieHistoryEventType.DownloadFolderImported &&
-                            h.Data.GetValueOrDefault("FileId") == fileId.ToString() &&
+                            h.Data.GetValueOrDefault("fileId") == fileId.ToString() &&
                             !h.DownloadId.IsNullOrWhiteSpace())
                 .Select(h => h.DownloadId)
                 .FirstOrDefault();

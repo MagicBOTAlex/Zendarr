@@ -56,5 +56,33 @@ namespace NzbDrone.Core.Test.Messaging.Commands
             Mocker.GetMock<ICommandRepository>()
                   .Verify(v => v.Get(It.IsAny<int>()), Times.Never());
         }
+
+        [Test]
+        public void should_persist_cancelled_status_when_cancelling_a_queued_command()
+        {
+            var command = Subject.Push<RefreshMonitoredDownloadsCommand>(new RefreshMonitoredDownloadsCommand());
+
+            Subject.Cancel(command.Id);
+
+            Mocker.GetMock<ICommandRepository>()
+                  .Verify(v => v.End(It.Is<CommandModel>(c => c.Status == CommandStatus.Cancelled &&
+                                                              c.EndedAt.HasValue)), Times.Once());
+            Subject.All().Should().BeEmpty();
+        }
+
+        [Test]
+        public void should_default_a_completed_command_without_a_reported_result_to_successful()
+        {
+            var command = Subject.Push<RefreshMonitoredDownloadsCommand>(new RefreshMonitoredDownloadsCommand());
+
+            command.StartedAt = DateTime.Now;
+            command.Status = CommandStatus.Started;
+            Subject.Start(command);
+
+            Subject.Complete(command, "All done");
+
+            Mocker.GetMock<ICommandRepository>()
+                  .Verify(v => v.End(It.Is<CommandModel>(c => c.Result == CommandResult.Successful)), Times.Once());
+        }
     }
 }
